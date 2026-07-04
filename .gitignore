@@ -1,0 +1,4 @@
+node_modules/
+zara-scraper/node_modules/
+.env
+uploads/

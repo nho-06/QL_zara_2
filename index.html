@@ -1,0 +1,855 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>Trang chủ sản phẩm</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="layout">
+    <aside class="sidebar" id="sidebar"></aside>
+
+    <main class="main-content">
+        <h1>Trang chủ sản phẩm</h1>
+
+        <form class="search-box" onsubmit="searchProducts(event)">
+            <input
+                type="text"
+                id="searchInput"
+                placeholder="Tìm kiếm theo tên sản phẩm hoặc ID sản phẩm"
+            >
+            <button type="submit">Tìm kiếm</button>
+            <button type="button" onclick="loadProducts(true)">Làm mới</button>
+        </form>
+
+        <div class="filter-row">
+            <button type="button" class="pink-btn" onclick="showAllProducts()">
+                Tất cả
+            </button>
+
+            <button type="button" class="pink-btn" onclick="showOutOfStockProducts()">
+                Hết hàng
+            </button>
+
+            <button type="button" class="pink-btn" onclick="window.location.href='canh_back_size.html'">
+                Canh back size
+            </button>
+        </div>
+
+        <div id="productList" class="product-card-list"></div>
+    </main>
+</div>
+
+<div id="orderModal" class="modal hidden">
+    <div class="modal-content">
+        <h2>Khách order sản phẩm</h2>
+
+        <form onsubmit="saveOrder(event)">
+            <input type="hidden" id="orderProductId">
+
+            <div class="modal-product-info">
+                <h3 id="orderProductName"></h3>
+                <p id="orderProductPrice"></p>
+            </div>
+
+            <input type="text" id="customerName" placeholder="Tên khách hàng" required>
+            <input type="text" id="phone" placeholder="Số điện thoại">
+            <input type="text" id="address" placeholder="Địa chỉ">
+
+            <select id="colorSelect" required>
+                <option value="">-- Chọn màu --</option>
+            </select>
+
+            <select id="sizeSelect" required>
+                <option value="">-- Chọn size --</option>
+            </select>
+
+            <input type="number" id="quantity" placeholder="Số lượng" min="1" required>
+            <input type="number" id="depositMoney" placeholder="Số tiền đã cọc">
+
+            <div class="modal-actions">
+                <button type="submit">Lưu order</button>
+                <button type="button" class="cancel-btn" onclick="closeOrderModal()">Hủy</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div id="sizeModal" class="modal hidden">
+    <div class="modal-content size-modal-content">
+        <button type="button" class="modal-close-btn" onclick="closeSizeModal()">×</button>
+
+        <h2>Bảng size</h2>
+        <div id="sizeContent"></div>
+    </div>
+</div>
+
+<div id="watchStockModal" class="modal hidden">
+    <div class="modal-content">
+        <button type="button" class="modal-close-btn" onclick="closeWatchStockModal()">×</button>
+
+        <h2>Canh back theo size</h2>
+
+        <form onsubmit="submitWatchStockForm(event)">
+            <input type="hidden" id="watchProductIndex">
+
+            <div class="modal-product-info">
+                <h3 id="watchProductName"></h3>
+                <p id="watchProductCode"></p>
+            </div>
+
+            <select id="watchTargetSize" required>
+                <option value="">-- Chọn size cần canh --</option>
+            </select>
+
+            <input
+                type="email"
+                id="watchEmail"
+                placeholder="Nhập email nhận thông báo"
+                required
+            >
+
+            <div class="modal-actions">
+                <button type="submit">OK</button>
+                <button type="button" class="cancel-btn" onclick="closeWatchStockModal()">Hủy</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script type="module">
+import {
+    SERVER_BASE_URL,
+    safe,
+    moneyVnd,
+    moneyEur,
+    getAll,
+    getDefaultRate,
+    sortProductsNewestFirst,
+    splitColors,
+    addOne,
+    getProductImage,
+    now
+} from "./utils.js";
+
+let allProducts = [];
+let currentProduct = null;
+let currentFinalPrice = 0;
+let lastCountries = [];
+let lastProductPrices = [];
+let lastRate = 31500;
+let currentStockFilter = "all";
+
+window.loadProducts = loadProducts;
+window.searchProducts = searchProducts;
+window.openOrderModal = openOrderModal;
+window.closeOrderModal = closeOrderModal;
+window.saveOrder = saveOrder;
+window.openSizeModal = openSizeModal;
+window.closeSizeModal = closeSizeModal;
+window.showAllProducts = showAllProducts;
+window.showOutOfStockProducts = showOutOfStockProducts;
+window.watchStockFromHome = watchStockFromHome;
+window.closeWatchStockModal = closeWatchStockModal;
+window.submitWatchStockForm = submitWatchStockForm;
+window.checkStockNow = checkStockNow;
+
+function safeNumber(value) {
+    if (value === null || value === undefined || value === "") {
+        return 0;
+    }
+
+    if (typeof value === "number") {
+        return isNaN(value) ? 0 : value;
+    }
+
+    let text = String(value).trim();
+
+    text = text
+        .replace(/\s/g, "")
+        .replace("€", "")
+        .replace("đ", "");
+
+    if (text.includes(",") && text.includes(".")) {
+        text = text.replace(/\./g, "").replace(",", ".");
+    } else if (text.includes(",")) {
+        text = text.replace(",", ".");
+    }
+
+    const number = Number(text);
+
+    return isNaN(number) ? 0 : number;
+}
+
+function getValidRate(rate) {
+    const value = safeNumber(rate);
+    return value > 0 ? value : 31500;
+}
+
+function convertEurToVnd(priceEur, rate) {
+    return Math.round(safeNumber(priceEur) * getValidRate(rate));
+}
+
+function normalizeSize(size) {
+    return String(size || "")
+        .trim()
+        .toUpperCase()
+        .replace(/\s+/g, "");
+}
+
+function uniqueSizes(sizes) {
+    const order = ["XXS", "XS", "S", "M", "L", "XL", "XXL", "XXXL"];
+
+    const normalized = (sizes || [])
+        .map(size => normalizeSize(size))
+        .filter(Boolean);
+
+    const result = [];
+
+    for (const size of order) {
+        if (normalized.includes(size) && !result.includes(size)) {
+            result.push(size);
+        }
+    }
+
+    normalized.forEach(size => {
+        if (!result.includes(size)) {
+            result.push(size);
+        }
+    });
+
+    return result;
+}
+
+function getAvailableProductSizes(product) {
+    if (!product) return [];
+
+    if (Array.isArray(product.sizeOptions) && product.sizeOptions.length > 0) {
+        return uniqueSizes(
+            product.sizeOptions
+                .filter(item => item && item.available === true)
+                .map(item => item.size)
+        );
+    }
+
+    if (Array.isArray(product.availableSizes) && product.availableSizes.length > 0) {
+        return uniqueSizes(product.availableSizes);
+    }
+
+    return [];
+}
+
+function getAllProductSizes(product) {
+    if (!product) return [];
+
+    if (Array.isArray(product.sizeOptions) && product.sizeOptions.length > 0) {
+        return uniqueSizes(product.sizeOptions.map(item => item.size));
+    }
+
+    if (
+        product.sizeChart &&
+        Array.isArray(product.sizeChart.sizes) &&
+        product.sizeChart.sizes.length > 0
+    ) {
+        return uniqueSizes(product.sizeChart.sizes);
+    }
+
+    if (Array.isArray(product.allSizes) && product.allSizes.length > 0) {
+        return uniqueSizes(product.allSizes);
+    }
+
+    if (Array.isArray(product.availableSizes) && product.availableSizes.length > 0) {
+        return uniqueSizes(product.availableSizes);
+    }
+
+    return [];
+}
+
+function getSoldOutProductSizes(product) {
+    if (!product) return [];
+
+    if (Array.isArray(product.sizeOptions) && product.sizeOptions.length > 0) {
+        return uniqueSizes(
+            product.sizeOptions
+                .filter(item => item && item.available === false)
+                .map(item => item.size)
+        );
+    }
+
+    if (Array.isArray(product.soldOutSizes) && product.soldOutSizes.length > 0) {
+        return uniqueSizes(product.soldOutSizes);
+    }
+
+    const allSizes = getAllProductSizes(product);
+    const availableSizes = getAvailableProductSizes(product);
+
+    if (allSizes.length === 0) {
+        return [];
+    }
+
+    return allSizes.filter(size => !availableSizes.includes(size));
+}
+
+function isOutOfStockProduct(product) {
+    if (!product) return false;
+
+    if (product.stockStatus === "out_of_stock" || product.isOutOfStock === true) {
+        return true;
+    }
+
+    if (Array.isArray(product.sizeOptions) && product.sizeOptions.length > 0) {
+        return getAvailableProductSizes(product).length === 0;
+    }
+
+    return false;
+}
+
+function buildSizeBadges(product) {
+    const allSizes = getAllProductSizes(product);
+    const availableSizes = getAvailableProductSizes(product);
+    const soldOutSizes = getSoldOutProductSizes(product);
+
+    if (allSizes.length === 0) {
+        return `<div class="size-badges muted-size-text">Chưa lấy được size</div>`;
+    }
+
+    return `
+        <div class="size-badges">
+            ${allSizes.map(size => {
+                const isAvailable = availableSizes.includes(size);
+                const isSoldOut = soldOutSizes.includes(size);
+
+                if (isAvailable) {
+                    return `<span class="size-badge available-size">${safe(size)}</span>`;
+                }
+
+                if (isSoldOut) {
+                    return `<span class="size-badge soldout-size">${safe(size)}</span>`;
+                }
+
+                return `<span class="size-badge unknown-size">${safe(size)}</span>`;
+            }).join("")}
+        </div>
+    `;
+}
+
+async function loadProducts(forceRefresh = false) {
+    const productList = document.getElementById("productList");
+
+    productList.innerHTML = `<div class="page-note">Đang tải sản phẩm...</div>`;
+
+    try {
+        const [
+            products,
+            productPrices,
+            defaultRate
+        ] = await Promise.all([
+            getAll("products"),
+            getAll("product_prices"),
+            getDefaultRate()
+        ]);
+
+        lastCountries = [];
+        lastProductPrices = productPrices || [];
+        lastRate = getValidRate(defaultRate);
+
+        allProducts = sortProductsNewestFirst(products || []).map(product => {
+            const productKey = String(product.id || product.productCode || "");
+
+            const priceRow = lastProductPrices.find(item => {
+                return (
+                    String(item.productId || "") === productKey ||
+                    String(item.productCode || "") === productKey
+                );
+            });
+
+            const priceEur =
+                safeNumber(priceRow?.salePriceEur) ||
+                safeNumber(priceRow?.priceEur) ||
+                safeNumber(product.salePriceEur) ||
+                safeNumber(product.priceEur) ||
+                safeNumber(product.price);
+
+            const finalPriceVnd =
+                safeNumber(priceRow?.finalPriceVnd) ||
+                safeNumber(priceRow?.priceVnd) ||
+                convertEurToVnd(priceEur, lastRate);
+
+            return {
+                ...product,
+                priceEur,
+                finalPriceVnd
+            };
+        });
+
+        renderProducts(allProducts);
+    } catch (error) {
+        console.error("Load products error:", error);
+
+        productList.innerHTML = `
+            <div class="page-note error-note">
+                Không tải được sản phẩm từ Firebase. Kiểm tra mạng hoặc Firebase rules.
+            </div>
+        `;
+    }
+}
+
+function renderProducts(products) {
+    const productList = document.getElementById("productList");
+
+    let showProducts = [...products];
+
+    if (currentStockFilter === "out") {
+        showProducts = showProducts.filter(product => isOutOfStockProduct(product));
+    }
+
+    if (showProducts.length === 0) {
+        productList.innerHTML = `
+            <div class="page-note">
+                Chưa có sản phẩm nào.
+            </div>
+        `;
+        return;
+    }
+
+    productList.innerHTML = showProducts.map(product => {
+        const originalIndex = allProducts.indexOf(product);
+        const imageUrl = getProductImage(product);
+
+        const productName = product.name || product.title || "Không có tên";
+        const productCode = product.productCode || product.id || "";
+
+        const priceEur = safeNumber(product.priceEur);
+        const finalPriceVnd = safeNumber(product.finalPriceVnd);
+
+        const isOut = isOutOfStockProduct(product);
+
+        const availableSizes = getAvailableProductSizes(product);
+        const soldOutSizes = getSoldOutProductSizes(product);
+
+        const canOrder = availableSizes.length > 0 && !isOut;
+        const canWatch = soldOutSizes.length > 0 || isOut;
+
+        return `
+            <div class="product-card ${isOut ? "out-of-stock-card" : ""}">
+                <div class="product-image-wrap">
+                    ${
+                        imageUrl
+                            ? `<img src="${safe(imageUrl)}" alt="${safe(productName)}" class="${isOut ? "out-stock-img" : ""}">`
+                            : `<div class="no-image">Không có ảnh</div>`
+                    }
+
+                    ${
+                        isOut
+                            ? `<div class="stock-overlay">Hết hàng</div>`
+                            : ""
+                    }
+                </div>
+
+                <div class="product-info">
+                    <h3>${safe(productName)}</h3>
+
+                    <p><b>ID:</b> ${safe(productCode)}</p>
+                    <p><b>Màu:</b> ${safe(product.color || "")}</p>
+                    <p><b>Giá EUR:</b> ${priceEur ? moneyEur(priceEur) : "Chưa có"}</p>
+                    <p><b>Giá VNĐ:</b> ${finalPriceVnd ? moneyVnd(finalPriceVnd) : "Chưa có"}</p>
+
+                    <div class="home-size-row">
+                        <b>Size:</b>
+                        ${buildSizeBadges(product)}
+                    </div>
+
+                    <div class="card-actions">
+                        ${
+                            canOrder
+                                ? `<button type="button" onclick="openOrderModal(${originalIndex})">Order</button>`
+                                : `<button type="button" disabled>Hết hàng</button>`
+                        }
+
+                        <button type="button" onclick="openSizeModal(${originalIndex})">
+                            Bảng size
+                        </button>
+
+                        ${
+                            canWatch
+                                ? `<button type="button" class="watch-btn" onclick="watchStockFromHome(${originalIndex})">Canh back size</button>`
+                                : ""
+                        }
+
+                        <button type="button" class="check-btn" onclick="checkStockNow(${originalIndex})">
+                            Check Zara
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join("");
+}
+
+function showAllProducts() {
+    currentStockFilter = "all";
+    renderProducts(allProducts);
+}
+
+function showOutOfStockProducts() {
+    currentStockFilter = "out";
+    renderProducts(allProducts);
+}
+
+function searchProducts(event) {
+    event.preventDefault();
+
+    const keyword = document.getElementById("searchInput").value.trim().toLowerCase();
+
+    if (!keyword) {
+        renderProducts(allProducts);
+        return;
+    }
+
+    const filtered = allProducts.filter(product => {
+        const name = String(product.name || product.title || "").toLowerCase();
+        const id = String(product.id || product.productCode || "").toLowerCase();
+
+        return name.includes(keyword) || id.includes(keyword);
+    });
+
+    renderProducts(filtered);
+}
+
+function openOrderModal(index) {
+    const product = allProducts[index];
+
+    if (!product) {
+        alert("Không tìm thấy sản phẩm.");
+        return;
+    }
+
+    const availableSizes = getAvailableProductSizes(product);
+
+    if (availableSizes.length === 0 || isOutOfStockProduct(product)) {
+        alert("Sản phẩm này không còn size nào để order. Bạn có thể canh back size.");
+        return;
+    }
+
+    currentProduct = product;
+    currentFinalPrice = safeNumber(product.finalPriceVnd);
+
+    document.getElementById("orderProductId").value = product.id || product.productCode || "";
+    document.getElementById("orderProductName").innerText = product.name || product.title || "";
+    document.getElementById("orderProductPrice").innerText = currentFinalPrice
+        ? moneyVnd(currentFinalPrice)
+        : "Chưa có giá";
+
+    const colorSelect = document.getElementById("colorSelect");
+    const colors = splitColors(product.color || "");
+
+    colorSelect.innerHTML = `<option value="">-- Chọn màu --</option>`;
+
+    if (colors.length > 0) {
+        colors.forEach(color => {
+            colorSelect.innerHTML += `<option value="${safe(color)}">${safe(color)}</option>`;
+        });
+    } else {
+        colorSelect.innerHTML += `<option value="${safe(product.color || "Không rõ")}">${safe(product.color || "Không rõ")}</option>`;
+    }
+
+    const sizeSelect = document.getElementById("sizeSelect");
+
+    sizeSelect.innerHTML = `<option value="">-- Chọn size --</option>`;
+
+    availableSizes.forEach(size => {
+        sizeSelect.innerHTML += `<option value="${safe(size)}">${safe(size)}</option>`;
+    });
+
+    document.getElementById("quantity").value = 1;
+    document.getElementById("depositMoney").value = "";
+
+    document.getElementById("orderModal").classList.remove("hidden");
+}
+
+function closeOrderModal() {
+    document.getElementById("orderModal").classList.add("hidden");
+}
+
+async function saveOrder(event) {
+    event.preventDefault();
+
+    if (!currentProduct) {
+        alert("Chưa chọn sản phẩm.");
+        return;
+    }
+
+    const quantity = safeNumber(document.getElementById("quantity").value);
+    const depositMoney = safeNumber(document.getElementById("depositMoney").value);
+
+    if (quantity <= 0) {
+        alert("Số lượng không hợp lệ.");
+        return;
+    }
+
+    const totalMoney = currentFinalPrice * quantity;
+    const remainMoney = totalMoney - depositMoney;
+
+    const order = {
+        productId: currentProduct.id || currentProduct.productCode || "",
+        productCode: currentProduct.productCode || currentProduct.id || "",
+        productName: currentProduct.name || currentProduct.title || "",
+
+        productImage: getProductImage(currentProduct),
+
+        customerName: document.getElementById("customerName").value.trim(),
+        phone: document.getElementById("phone").value.trim(),
+        address: document.getElementById("address").value.trim(),
+
+        color: document.getElementById("colorSelect").value,
+        size: document.getElementById("sizeSelect").value,
+
+        quantity,
+        priceVnd: currentFinalPrice,
+        totalMoney,
+        depositMoney,
+        remainMoney,
+
+        status: "ordering",
+        createdAt: now(),
+        updatedAt: now()
+    };
+
+    await addOne("orders", order);
+
+    alert("Đã lưu order.");
+    closeOrderModal();
+}
+
+function openSizeModal(index) {
+    const product = allProducts[index];
+
+    if (!product) {
+        return;
+    }
+
+    const content = document.getElementById("sizeContent");
+
+    let html = "";
+
+    const availableSizes = getAvailableProductSizes(product);
+    const soldOutSizes = getSoldOutProductSizes(product);
+
+    html += `
+        <div class="size-chart-box">
+            <h3>Trạng thái size</h3>
+            <p><b>Còn size:</b> ${availableSizes.length ? availableSizes.map(size => safe(size)).join(", ") : "Không còn size nào"}</p>
+            <p><b>Hết size:</b> ${soldOutSizes.length ? soldOutSizes.map(size => safe(size)).join(", ") : "Không có"}</p>
+            ${buildSizeBadges(product)}
+        </div>
+    `;
+
+    if (
+        product.sizeChart &&
+        product.sizeChart.sizes &&
+        product.sizeChart.rows &&
+        product.sizeChart.rows.length > 0
+    ) {
+        html += `
+            <div class="size-chart-box">
+                <h3>Bảng size ${safe(product.sizeChart.unit || "CM")}</h3>
+
+                <div class="size-table-scroll">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>AREA</th>
+                                ${product.sizeChart.sizes.map(size => `<th>${safe(size)}</th>`).join("")}
+                            </tr>
+                        </thead>
+
+                        <tbody>
+                            ${product.sizeChart.rows.map(row => `
+                                <tr>
+                                    <td>${safe(row.area)}</td>
+                                    ${product.sizeChart.sizes.map(size => `
+                                        <td>${safe(row[size] || "")}</td>
+                                    `).join("")}
+                                </tr>
+                            `).join("")}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        `;
+    } else {
+        html += `
+            <div class="page-note">
+                Chưa lấy được bảng size chi tiết.
+            </div>
+        `;
+    }
+
+    content.innerHTML = html;
+    document.getElementById("sizeModal").classList.remove("hidden");
+}
+
+function closeSizeModal() {
+    document.getElementById("sizeModal").classList.add("hidden");
+}
+
+function watchStockFromHome(index) {
+    const product = allProducts[index];
+
+    if (!product) {
+        alert("Không tìm thấy sản phẩm.");
+        return;
+    }
+
+    const soldOutSizes = getSoldOutProductSizes(product);
+    const allSizes = getAllProductSizes(product);
+
+    let sizesToShow = soldOutSizes;
+
+    if (sizesToShow.length === 0 && isOutOfStockProduct(product)) {
+        sizesToShow = allSizes;
+    }
+
+    if (sizesToShow.length === 0) {
+        alert("Sản phẩm này chưa có size hết để canh back.");
+        return;
+    }
+
+    document.getElementById("watchProductIndex").value = index;
+    document.getElementById("watchProductName").innerText = product.name || product.title || "";
+    document.getElementById("watchProductCode").innerText = product.productCode || product.id || "";
+
+    const select = document.getElementById("watchTargetSize");
+
+    select.innerHTML = `<option value="">-- Chọn size cần canh --</option>`;
+
+    sizesToShow.forEach(size => {
+        select.innerHTML += `<option value="${safe(size)}">${safe(size)} - hết size</option>`;
+    });
+
+    document.getElementById("watchEmail").value = "";
+    document.getElementById("watchStockModal").classList.remove("hidden");
+}
+
+function closeWatchStockModal() {
+    document.getElementById("watchStockModal").classList.add("hidden");
+}
+
+async function submitWatchStockForm(event) {
+    event.preventDefault();
+
+    const index = Number(document.getElementById("watchProductIndex").value);
+    const product = allProducts[index];
+
+    if (!product) {
+        alert("Không tìm thấy sản phẩm.");
+        return;
+    }
+
+    const email = document.getElementById("watchEmail").value.trim();
+    const targetSize = document.getElementById("watchTargetSize").value.trim();
+
+    if (!email) {
+        alert("Bạn chưa nhập email.");
+        return;
+    }
+
+    if (!targetSize) {
+        alert("Bạn chưa chọn size cần canh.");
+        return;
+    }
+
+    const payload = {
+        productId: product.id || product.productCode || "",
+        productCode: product.productCode || product.id || "",
+        productName: product.name || product.title || "",
+        productUrl: product.productUrl || product.url || "",
+
+        productImage: getProductImage(product),
+
+        email,
+        targetSize,
+
+        status: "watching",
+        notified: false,
+
+        createdAt: now(),
+        updatedAt: now()
+    };
+
+    try {
+        const response = await fetch(`${SERVER_BASE_URL}/stock-alerts/watch`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify(payload)
+        });
+
+        const result = await response.json();
+
+        if (!result.success) {
+            alert(result.message || "Không lưu được canh back.");
+            return;
+        }
+
+        closeWatchStockModal();
+    } catch (error) {
+        alert("Không gọi được server canh back. Hãy chạy zara-scraper/server.js.");
+    }
+}
+
+async function checkStockNow(index) {
+    const product = allProducts[index];
+
+    if (!product) {
+        alert("Không tìm thấy sản phẩm.");
+        return;
+    }
+
+    const productUrl = product.productUrl || product.url || "";
+
+    if (!productUrl) {
+        alert("Sản phẩm này không có link Zara để check.");
+        return;
+    }
+
+    try {
+        const response = await fetch(`${SERVER_BASE_URL}/stock-alerts/check-now`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                productUrl,
+                targetSize: ""
+            })
+        });
+
+        const result = await response.json();
+
+        if (!result.success) {
+            alert(result.message || "Không check được Zara.");
+            return;
+        }
+
+        const data = result.data || {};
+        const availableSizes = data.availableSizes || [];
+
+        alert(
+            availableSizes.length > 0
+                ? `Zara đang còn size: ${availableSizes.join(", ")}`
+                : "Zara đang hết size / chưa lấy được size."
+        );
+    } catch (error) {
+        alert("Không gọi được server check Zara.");
+    }
+}
+
+loadProducts();
+</script>
+
+<script src="script.js"></script>
+</body>
+</html>

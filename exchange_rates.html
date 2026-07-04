@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>Tỉ giá</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="layout">
+    <aside class="sidebar" id="sidebar"></aside>
+
+    <main class="main-content">
+        <h1>Quản lý tỉ giá</h1>
+
+        <div class="page-note" id="defaultRateBox">
+            Đang tải tỉ giá mặc định...
+        </div>
+
+        <div class="form-box">
+            <h2 id="formTitle">Thêm tỉ giá</h2>
+
+            <input type="hidden" id="rateId">
+
+            <input
+                type="text"
+                id="rateName"
+                placeholder="Tên tỉ giá, ví dụ: Tỉ giá tháng 6"
+                required
+            >
+
+            <input
+                type="number"
+                step="0.01"
+                id="eurToVnd"
+                placeholder="Nhập tỉ giá, ví dụ: 28000"
+                required
+            >
+
+            <div class="form-action-row">
+                <button type="button" id="saveRateBtn" onclick="saveRate()">
+                    Thêm tỉ giá
+                </button>
+
+                <button type="button" class="cancel-btn" onclick="resetForm()">
+                    Hủy
+                </button>
+            </div>
+        </div>
+
+        <button class="pink-btn top-action-btn" onclick="loadRates(true)">
+            Làm mới từ Firebase
+        </button>
+
+        <h2>Danh sách tỉ giá</h2>
+
+        <div class="table-box">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Tên tỉ giá</th>
+                        <th>1 EUR = VND</th>
+                        <th>Mặc định</th>
+                        <th>Ngày tạo</th>
+                        <th>Thao tác</th>
+                    </tr>
+                </thead>
+
+                <tbody id="rateList">
+                    <tr>
+                        <td colspan="5">Đang tải dữ liệu...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </main>
+</div>
+
+<script src="script.js"></script>
+
+<script type="module">
+import {
+    safe,
+    moneyVnd,
+    getAll,
+    setOne,
+    updateOne,
+    deleteOne,
+    makeKey,
+    now
+} from "./utils.js";
+
+let exchangeRates = [];
+
+window.loadRates = loadRates;
+window.saveRate = saveRate;
+window.editRate = editRate;
+window.setDefaultRate = setDefaultRate;
+window.deleteRate = deleteRate;
+window.resetForm = resetForm;
+
+function clearPageCaches() {
+    localStorage.removeItem("exchangeRatesPageCache");
+    localStorage.removeItem("homeProductsCache");
+    localStorage.removeItem("productsPageCache");
+    localStorage.removeItem("productPricesPageCache");
+    localStorage.removeItem("availablePageCache");
+    localStorage.removeItem("ordersPageCache");
+    localStorage.removeItem("historyPageCache");
+}
+
+function safeNumber(value) {
+    const number = Number(value || 0);
+    return isNaN(number) ? 0 : number;
+}
+
+async function loadRates(forceReload = false) {
+    const rateList = document.getElementById("rateList");
+
+    const cache = localStorage.getItem("exchangeRatesPageCache");
+
+    if (!forceReload && cache) {
+        try {
+            const cacheData = JSON.parse(cache);
+
+            exchangeRates = cacheData.exchangeRates || [];
+
+            renderDefaultRate();
+            renderRates();
+
+            refreshRatesInBackground();
+            return;
+        } catch (error) {
+            localStorage.removeItem("exchangeRatesPageCache");
+        }
+    }
+
+    rateList.innerHTML = `<tr><td colspan="5">Đang tải dữ liệu...</td></tr>`;
+
+    try {
+        exchangeRates = await getAll("exchange_rates");
+
+        if (exchangeRates.length === 0) {
+            await setOne("exchange_rates", "default", {
+                rateName: "Tỉ giá mặc định",
+                eurToVnd: 31500,
+                isDefault: true,
+                createdAt: now(),
+                updatedAt: now()
+            });
+
+            exchangeRates = await getAll("exchange_rates");
+        }
+
+        saveRatesCache();
+        renderDefaultRate();
+        renderRates();
+    } catch (error) {
+        rateList.innerHTML = `
+            <tr>
+                <td colspan="5">
+                    Không tải được Firebase. Kiểm tra mạng hoặc Firebase rules.
+                </td>
+            </tr>
+        `;
+    }
+}
+
+async function refreshRatesInBackground() {
+    try {
+        exchangeRates = await getAll("exchange_rates");
+
+        saveRatesCache();
+        renderDefaultRate();
+        renderRates();
+    } catch (error) {
+        console.log("Không cập nhật được Firebase, đang dùng cache tỉ giá.");
+    }
+}
+
+function saveRatesCache() {
+    localStorage.setItem("exchangeRatesPageCache", JSON.stringify({
+        exchangeRates,
+        savedAt: Date.now()
+    }));
+}
+
+function getDefaultRate() {
+    const defaultRate = exchangeRates.find(rate =>
+        rate.isDefault === true ||
+        rate.is_default === true ||
+        rate.is_default === 1
+    );
+
+    if (defaultRate) {
+        return safeNumber(defaultRate.eurToVnd || defaultRate.eur_to_vnd);
+    }
+
+    if (exchangeRates.length > 0) {
+        return safeNumber(exchangeRates[0].eurToVnd || exchangeRates[0].eur_to_vnd);
+    }
+
+    return 31500;
+}
+
+function getRateName(rate) {
+    return rate.rateName || rate.rate_name || "";
+}
+
+function getRateValue(rate) {
+    return safeNumber(rate.eurToVnd || rate.eur_to_vnd);
+}
+
+function isDefaultRate(rate) {
+    return rate.isDefault === true ||
+           rate.is_default === true ||
+           rate.is_default === 1;
+}
+
+function renderDefaultRate() {
+    const defaultRateBox = document.getElementById("defaultRateBox");
+    const defaultRate = getDefaultRate();
+
+    defaultRateBox.innerHTML = `
+        Tỉ giá đang dùng mặc định:
+        <b>1 EUR = ${moneyVnd(defaultRate)}</b>.
+        Giá sản phẩm nhập bằng EUR, hệ thống tự quy đổi sang tiền Việt theo tỉ giá mặc định.
+    `;
+}
+
+function renderRates() {
+    const rateList = document.getElementById("rateList");
+    rateList.innerHTML = "";
+
+    const list = [...exchangeRates].sort((a, b) => {
+        if (isDefaultRate(a) && !isDefaultRate(b)) return -1;
+        if (!isDefaultRate(a) && isDefaultRate(b)) return 1;
+
+        return String(b.createdAt || "").localeCompare(String(a.createdAt || ""));
+    });
+
+    if (list.length === 0) {
+        rateList.innerHTML = `<tr><td colspan="5">Chưa có tỉ giá nào</td></tr>`;
+        return;
+    }
+
+    list.forEach(rate => {
+        const defaultStatus = isDefaultRate(rate);
+
+        rateList.innerHTML += `
+            <tr>
+                <td>${safe(getRateName(rate))}</td>
+
+                <td>${moneyVnd(getRateValue(rate))}</td>
+
+                <td>
+                    ${
+                        defaultStatus
+                            ? `<span class="status-default">Đang mặc định</span>`
+                            : `<button class="success-link" onclick="setDefaultRate('${safe(rate.id)}')">
+                                Chọn mặc định
+                               </button>`
+                    }
+                </td>
+
+                <td>${safe(rate.createdAt || "")}</td>
+
+                <td>
+                    <button class="edit-link" onclick="editRate('${safe(rate.id)}')">
+                        Sửa
+                    </button>
+
+                    ${
+                        !defaultStatus
+                            ? `<button class="delete-link" onclick="deleteRate('${safe(rate.id)}')">
+                                Xóa
+                               </button>`
+                            : ""
+                    }
+                </td>
+            </tr>
+        `;
+    });
+}
+
+async function saveRate() {
+    const rateId = document.getElementById("rateId").value.trim();
+    const rateName = document.getElementById("rateName").value.trim();
+    const eurToVnd = safeNumber(document.getElementById("eurToVnd").value);
+
+    if (!rateName || eurToVnd <= 0) {
+        alert("Vui lòng nhập tên tỉ giá và số tiền hợp lệ.");
+        return;
+    }
+
+    const data = {
+        rateName,
+        eurToVnd,
+        updatedAt: now()
+    };
+
+    try {
+        if (rateId) {
+            await updateOne("exchange_rates", rateId, data);
+        } else {
+            const id = makeKey(`${rateName}_${Date.now()}`);
+
+            await setOne("exchange_rates", id, {
+                ...data,
+                isDefault: false,
+                createdAt: now()
+            });
+        }
+
+        clearPageCaches();
+
+        await loadRates(true);
+        resetForm();
+
+        alert(rateId ? "Đã cập nhật tỉ giá." : "Đã thêm tỉ giá.");
+    } catch (error) {
+        alert("Không lưu được tỉ giá. Kiểm tra Firebase rules.");
+    }
+}
+
+function editRate(id) {
+    const rate = exchangeRates.find(item => String(item.id) === String(id));
+
+    if (!rate) {
+        alert("Không tìm thấy tỉ giá.");
+        return;
+    }
+
+    document.getElementById("formTitle").innerText = "Sửa tỉ giá";
+    document.getElementById("saveRateBtn").innerText = "Cập nhật tỉ giá";
+
+    document.getElementById("rateId").value = rate.id;
+    document.getElementById("rateName").value = getRateName(rate);
+    document.getElementById("eurToVnd").value = getRateValue(rate);
+
+    window.scrollTo({
+        top: 0,
+        behavior: "smooth"
+    });
+}
+
+async function setDefaultRate(id) {
+    const ok = confirm("Chọn tỉ giá này làm mặc định?");
+
+    if (!ok) return;
+
+    try {
+        for (const rate of exchangeRates) {
+            await updateOne("exchange_rates", rate.id, {
+                isDefault: false
+            });
+        }
+
+        await updateOne("exchange_rates", id, {
+            isDefault: true,
+            updatedAt: now()
+        });
+
+        clearPageCaches();
+
+        await loadRates(true);
+
+        alert("Đã chọn tỉ giá mặc định.");
+    } catch (error) {
+        alert("Không chọn được tỉ giá mặc định. Kiểm tra Firebase rules.");
+    }
+}
+
+async function deleteRate(id) {
+    const rate = exchangeRates.find(item => String(item.id) === String(id));
+
+    if (!rate) {
+        alert("Không tìm thấy tỉ giá.");
+        return;
+    }
+
+    if (isDefaultRate(rate)) {
+        alert("Không được xóa tỉ giá đang mặc định.");
+        return;
+    }
+
+    const ok = confirm("Xóa tỉ giá này?");
+
+    if (!ok) return;
+
+    try {
+        await deleteOne("exchange_rates", id);
+
+        clearPageCaches();
+
+        await loadRates(true);
+
+        alert("Đã xóa tỉ giá.");
+    } catch (error) {
+        alert("Không xóa được tỉ giá. Kiểm tra Firebase rules.");
+    }
+}
+
+function resetForm() {
+    document.getElementById("formTitle").innerText = "Thêm tỉ giá";
+    document.getElementById("saveRateBtn").innerText = "Thêm tỉ giá";
+
+    document.getElementById("rateId").value = "";
+    document.getElementById("rateName").value = "";
+    document.getElementById("eurToVnd").value = "";
+}
+
+loadRates(false);
+</script>
+
+</body>
+</html>

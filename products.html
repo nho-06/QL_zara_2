@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>Sản phẩm</title>
+    <link rel="stylesheet" href="style.css">
+
+    <style>
+        .product-summary-box {
+            display: inline-block;
+            margin: 16px 0 24px;
+            padding: 16px 24px;
+            border-radius: 16px;
+            background: #fff;
+            color: #333;
+            font-size: 22px;
+            font-weight: 700;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+        }
+
+        .product-summary-box b {
+            color: #f25291;
+            font-size: 28px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="layout">
+    <aside class="sidebar" id="sidebar"></aside>
+
+    <main class="main-content">
+        <h1>Quản lý sản phẩm</h1>
+
+        <div id="productFormBox" class="form-box hidden-form">
+            <h2 id="formTitle">Thêm sản phẩm</h2>
+
+            <input type="hidden" id="editIndex">
+            <input type="hidden" id="firebaseId">
+
+            <input type="text" id="productId" placeholder="ID sản phẩm, ví dụ: 6050/065/710">
+            <input type="text" id="productName" placeholder="Tên sản phẩm">
+            <input type="number" id="productPrice" placeholder="Giá bán VNĐ">
+            <input type="text" id="productWeightPrice" placeholder="Giá cân nếu có">
+            <input type="text" id="productColor" placeholder="Màu sản phẩm">
+            <input type="text" id="productImage" placeholder="Link ảnh sản phẩm">
+            <input type="text" id="productUrl" placeholder="Link Zara">
+
+            <div class="form-action-row">
+                <button onclick="saveProduct()">Lưu sản phẩm</button>
+                <button class="cancel-btn" onclick="closeForm()">Hủy</button>
+            </div>
+        </div>
+
+        <form class="search-box" onsubmit="searchProducts(event)">
+            <input type="text" id="searchInput" placeholder="Tìm theo tên hoặc ID sản phẩm">
+            <button type="submit">Tìm kiếm</button>
+            <button type="button" class="cancel-btn" onclick="resetSearch()">Làm mới</button>
+        </form>
+<h2>Tất cả sản phẩm (<span id="totalProductCount">0</span>)</h2>
+
+        <div class="table-box">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Ảnh</th>
+                        <th>ID</th>
+                        <th>Tên</th>
+                        <th>Màu</th>
+                        <th>Giá bán</th>
+                        <th>Giá cân</th>
+                        <th>Bảng size</th>
+                        <th>Link Zara</th>
+                        <th>Thao tác</th>
+                    </tr>
+                </thead>
+
+                <tbody id="productList"></tbody>
+            </table>
+        </div>
+    </main>
+</div>
+
+<div id="sizeModal" class="modal hidden">
+    <div class="modal-content size-modal-content">
+        <button class="close-btn" onclick="closeSizeModal()">×</button>
+        <h2>Bảng size</h2>
+        <div id="sizeModalBody"></div>
+    </div>
+</div>
+
+<script type="module">
+import {
+    safe,
+    moneyVnd,
+    getAll,
+    sortProductsNewestFirst,
+    findByField,
+    setOne,
+    deleteOne,
+    makeKey,
+    getProductImage,
+    now
+} from "./utils.js";
+
+let products = [];
+let currentKeyword = "";
+let productPrices = [];
+let defaultCountryId = "spain";
+
+window.openAddForm = openAddForm;
+window.editProduct = editProduct;
+window.saveProduct = saveProduct;
+window.deleteProduct = deleteProduct;
+window.deleteAllLocalProducts = deleteAllLocalProducts;
+window.closeForm = closeForm;
+window.searchProducts = searchProducts;
+window.resetSearch = resetSearch;
+window.openSizeModal = openSizeModal;
+window.closeSizeModal = closeSizeModal;
+window.loadProducts = loadProducts;
+
+function safeParse(value) {
+    try {
+        return JSON.parse(value) || [];
+    } catch (e) {
+        return [];
+    }
+}
+
+function clearPageCaches() {
+    localStorage.removeItem("productsPageCache");
+    localStorage.removeItem("homeProductsCache");
+    localStorage.removeItem("productPricesPageCache");
+
+    sessionStorage.removeItem("homeProducts");
+    sessionStorage.removeItem("homeProductHtml");
+}
+
+function normalizeProduct(product) {
+    const id = product.id || product.productCode || product.code || "";
+    const image = getProductImage(product);
+
+    return {
+        ...product,
+
+        id,
+        firebaseId: product.firebaseId || product.id || makeKey(id),
+
+        productCode: product.productCode || id,
+
+        name: product.name || product.title || "",
+        title: product.title || product.name || "",
+
+        price: Number(product.price || product.priceVnd || product.sellPriceVnd || 0),
+        priceVnd: Number(product.price || product.priceVnd || product.sellPriceVnd || 0),
+
+        weightPrice: product.weightPrice || product.weightPriceVnd || product.weight_price_vnd || "",
+
+        image,
+        imageUrl: image,
+        productOnlyImage: product.productOnlyImage || image,
+        dimensionImage: product.dimensionImage || "",
+
+        color: product.color || "",
+
+        productUrl: product.productUrl || product.url || "",
+        url: product.url || product.productUrl || "",
+
+        availableSizes: product.availableSizes || [],
+        soldOutSizes: product.soldOutSizes || [],
+        allSizes: product.allSizes || [],
+
+        sizeOptions: product.sizeOptions || [],
+        sizeChart: product.sizeChart || null,
+        sizeChartImage: "",
+
+        createdAt: product.createdAt || product.importedAt || now(),
+        importedAt: product.importedAt || product.createdAt || now(),
+        updatedAt: product.updatedAt || product.importedAt || product.createdAt || now(),
+        sortAt: product.sortAt || product.updatedAt || product.importedAt || product.createdAt || now()
+    };
+}
+
+function saveLocalCache() {
+    localStorage.setItem("products", JSON.stringify(products));
+    localStorage.setItem("mainProducts", JSON.stringify(products));
+}
+
+async function ensureSpainCountry() {
+    let country = await findByField("countries", "countryName", "Spain");
+
+    if (country) {
+        defaultCountryId = country.id;
+        return country.id;
+    }
+
+    country = await findByField("countries", "name", "Zara EUR");
+
+    if (country) {
+        defaultCountryId = country.id;
+        return country.id;
+    }
+
+    await setOne("countries", "spain", {
+        countryName: "Spain",
+        name: "Spain",
+        currencyCode: "EUR",
+        code: "EUR",
+        note: "Zara Tây Ban Nha",
+        createdAt: now(),
+        updatedAt: now()
+    });
+
+    defaultCountryId = "spain";
+    return "spain";
+}
+
+async function loadProducts(showAlert = false) {
+    const productList = document.getElementById("productList");
+
+    const cache = localStorage.getItem("productsPageCache");
+
+    if (!showAlert && cache) {
+        try {
+            const cacheData = JSON.parse(cache);
+
+            products = sortProductsNewestFirst(
+                (cacheData.products || []).map(normalizeProduct)
+            );
+
+            productPrices = cacheData.productPrices || [];
+
+            displayProducts();
+            refreshProductsInBackground();
+            return;
+        } catch (error) {
+            localStorage.removeItem("productsPageCache");
+        }
+    }
+
+    productList.innerHTML = `<tr><td colspan="9">Đang tải dữ liệu...</td></tr>`;
+
+    try {
+        await ensureSpainCountry();
+
+        const firebaseProducts = await getAll("products");
+        productPrices = await getAll("product_prices");
+
+        products = sortProductsNewestFirst(
+            firebaseProducts.map(item => normalizeProduct({
+                ...item,
+                firebaseId: item.id
+            }))
+        );
+
+        localStorage.setItem("productsPageCache", JSON.stringify({
+            products,
+            productPrices,
+            savedAt: Date.now()
+        }));
+
+        saveLocalCache();
+        displayProducts();
+
+        if (showAlert) {
+            alert("Đã làm mới sản phẩm từ Firebase.");
+        }
+    } catch (error) {
+        products = sortProductsNewestFirst(
+            safeParse(localStorage.getItem("products")).map(normalizeProduct)
+        );
+
+        displayProducts();
+
+        if (showAlert) {
+            alert("Không tải được Firebase, đang dùng dữ liệu tạm trên máy.");
+        }
+    }
+}
+
+async function refreshProductsInBackground() {
+    try {
+        await ensureSpainCountry();
+
+        const firebaseProducts = await getAll("products");
+        productPrices = await getAll("product_prices");
+
+        products = sortProductsNewestFirst(
+            firebaseProducts.map(item => normalizeProduct({
+                ...item,
+                firebaseId: item.id
+            }))
+        );
+
+        localStorage.setItem("productsPageCache", JSON.stringify({
+            products,
+            productPrices,
+            savedAt: Date.now()
+        }));
+
+        saveLocalCache();
+        displayProducts();
+    } catch (error) {
+        console.log("Không cập nhật được Firebase, đang dùng cache sản phẩm.");
+    }
+}
+
+function getProductId(product) {
+    return product.productCode || product.id || "";
+}
+
+function getProductName(product) {
+    return product.name || product.title || "";
+}
+
+function getActivePrice(product) {
+    const firebaseId = product.firebaseId || product.id || product.productCode || "";
+
+    return productPrices.find(price => {
+        return (
+            String(price.productId || "") === String(firebaseId) &&
+            price.isActive === true
+        );
+    }) || null;
+}
+
+function getProductPrice(product) {
+    const activePrice = getActivePrice(product);
+
+    if (activePrice) {
+        return Number(
+            activePrice.priceVnd ||
+            activePrice.finalPriceVnd ||
+            0
+        );
+    }
+
+    return Number(product.price || product.priceVnd || product.sellPriceVnd || 0);
+}
+
+function getProductWeightPrice(product) {
+    return product.weightPrice || product.weightPriceVnd || product.weight_price_vnd || "";
+}
+
+function getProductColor(product) {
+    return product.color || "";
+}
+
+function getProductUrl(product) {
+    return product.productUrl || product.url || "";
+}
+
+function displayProducts() {
+    const productList = document.getElementById("productList");
+    const totalProductCount = document.getElementById("totalProductCount");
+
+    productList.innerHTML = "";
+
+    let filteredProducts = products;
+
+    if (currentKeyword.trim() !== "") {
+        const keyword = currentKeyword.toLowerCase();
+
+        filteredProducts = products.filter(product => {
+            return (
+                getProductId(product).toLowerCase().includes(keyword) ||
+                getProductName(product).toLowerCase().includes(keyword)
+            );
+        });
+    }
+
+    if (totalProductCount) {
+        totalProductCount.innerText = products.length;
+    }
+
+    if (filteredProducts.length === 0) {
+        productList.innerHTML = `<tr><td colspan="9">Không có sản phẩm nào</td></tr>`;
+        return;
+    }
+
+    filteredProducts.forEach(product => {
+        const realIndex = products.indexOf(product);
+
+        const image = getProductImage(product);
+        const price = getProductPrice(product);
+        const weightPrice = getProductWeightPrice(product);
+        const productUrl = getProductUrl(product);
+
+        const hasSize =
+            (
+                product.sizeChart &&
+                product.sizeChart.rows &&
+                product.sizeChart.rows.length > 0
+            ) ||
+            (
+                product.availableSizes &&
+                product.availableSizes.length > 0
+            ) ||
+            (
+                product.allSizes &&
+                product.allSizes.length > 0
+            ) ||
+            (
+                product.sizeOptions &&
+                product.sizeOptions.length > 0
+            );
+
+        productList.innerHTML += `
+            <tr>
+                <td>
+                    ${
+                        image
+                            ? `<img src="${safe(image)}" alt="Ảnh sản phẩm">`
+                            : "Chưa có ảnh"
+                    }
+                </td>
+
+                <td>${safe(getProductId(product))}</td>
+                <td>${safe(getProductName(product))}</td>
+                <td>${safe(getProductColor(product) || "Chưa có")}</td>
+                <td>${price > 0 ? moneyVnd(price) : "0 đ"}</td>
+                <td>${weightPrice ? moneyVnd(weightPrice) : "Chưa có"}</td>
+
+                <td>
+                    ${
+                        hasSize
+                            ? `<button class="size-btn" onclick="openSizeModal(${realIndex})">Xem bảng size</button>`
+                            : "Chưa có"
+                    }
+                </td>
+
+                <td>
+                    ${
+                        productUrl
+                            ? `<a class="small-link" href="${safe(productUrl)}" target="_blank">Mở link</a>`
+                            : "Chưa có"
+                    }
+                </td>
+
+                <td>
+                    <button class="edit-link" onclick="editProduct(${realIndex})">Sửa</button>
+                    <button class="delete-link" onclick="deleteProduct(${realIndex})">Xóa</button>
+                </td>
+            </tr>
+        `;
+    });
+}
+
+function openAddForm() {
+    clearForm();
+
+    document.getElementById("formTitle").innerText = "Thêm sản phẩm";
+    document.getElementById("productFormBox").classList.remove("hidden-form");
+}
+
+function editProduct(index) {
+    const product = products[index];
+
+    if (!product) {
+        alert("Không tìm thấy sản phẩm.");
+        return;
+    }
+
+    document.getElementById("formTitle").innerText = "Sửa sản phẩm";
+
+    document.getElementById("editIndex").value = index;
+    document.getElementById("firebaseId").value = product.firebaseId || makeKey(getProductId(product));
+
+    document.getElementById("productId").value = getProductId(product);
+    document.getElementById("productName").value = getProductName(product);
+    document.getElementById("productPrice").value = getProductPrice(product);
+    document.getElementById("productWeightPrice").value = getProductWeightPrice(product);
+    document.getElementById("productColor").value = getProductColor(product);
+    document.getElementById("productImage").value = getProductImage(product);
+    document.getElementById("productUrl").value = getProductUrl(product);
+
+    document.getElementById("productFormBox").classList.remove("hidden-form");
+}
+
+async function saveProduct() {
+    const editIndex = document.getElementById("editIndex").value;
+    const oldFirebaseId = document.getElementById("firebaseId").value;
+
+    const id = document.getElementById("productId").value.trim();
+    const name = document.getElementById("productName").value.trim();
+    const price = Number(document.getElementById("productPrice").value || 0);
+    const weightPrice = document.getElementById("productWeightPrice").value.trim();
+    const color = document.getElementById("productColor").value.trim();
+    const image = document.getElementById("productImage").value.trim();
+    const productUrl = document.getElementById("productUrl").value.trim();
+
+    if (id === "" || name === "") {
+        alert("Vui lòng nhập ID và tên sản phẩm.");
+        return;
+    }
+
+    const duplicate = products.some((product, index) => {
+        return (
+            String(getProductId(product)) === String(id) &&
+            String(index) !== String(editIndex)
+        );
+    });
+
+    if (duplicate) {
+        alert("ID sản phẩm đã tồn tại.");
+        return;
+    }
+
+    const currentTime = now();
+    const firebaseId = oldFirebaseId || makeKey(id);
+    const oldProduct = editIndex !== "" ? products[editIndex] : {};
+
+    const productData = {
+        ...oldProduct,
+
+        id,
+        productCode: id,
+
+        name,
+        title: name,
+
+        color,
+
+        imageUrl: image,
+        image,
+        productOnlyImage: image,
+        dimensionImage: oldProduct.dimensionImage || "",
+
+        productUrl,
+        url: productUrl,
+
+        weightPrice,
+
+        priceVnd: price,
+        price,
+
+        availableSizes: oldProduct.availableSizes || [],
+        soldOutSizes: oldProduct.soldOutSizes || [],
+        allSizes: oldProduct.allSizes || [],
+        sizeOptions: oldProduct.sizeOptions || [],
+
+        sizeChart: oldProduct.sizeChart || null,
+        sizeChartImage: "",
+
+        createdAt: oldProduct.createdAt || currentTime,
+        importedAt: oldProduct.importedAt || oldProduct.createdAt || currentTime,
+
+        updatedAt: currentTime,
+        sortAt: currentTime
+    };
+
+    try {
+        await setOne("products", firebaseId, productData);
+
+        if (price > 0) {
+            await setOne("product_prices", `${firebaseId}_manual`, {
+                productId: firebaseId,
+                productCode: id,
+                countryId: defaultCountryId,
+                priceLabel: "Giá nhập tay",
+                priceVnd: price,
+                finalPriceVnd: price,
+                isActive: true,
+                createdAt: oldProduct.createdAt || currentTime,
+                updatedAt: currentTime
+            });
+        }
+
+        clearPageCaches();
+
+        await loadProducts(true);
+        closeForm();
+
+        alert("Đã lưu sản phẩm vào Firebase.");
+    } catch (error) {
+        alert("Không lưu được Firebase. Kiểm tra rules/kết nối mạng.");
+    }
+}
+
+async function deleteProduct(index) {
+    const product = products[index];
+
+    if (!product) {
+        alert("Không tìm thấy sản phẩm.");
+        return;
+    }
+
+    const ok = confirm(`Xóa sản phẩm "${getProductName(product)}" khỏi Firebase?`);
+
+    if (!ok) return;
+
+    try {
+        await deleteOne("products", product.firebaseId || product.id);
+
+        for (const price of productPrices) {
+            if (
+                String(price.productId || "") === String(product.firebaseId || product.id) ||
+                String(price.productCode || "") === String(product.productCode || product.id)
+            ) {
+                await deleteOne("product_prices", price.id);
+            }
+        }
+
+        clearPageCaches();
+
+        await loadProducts(true);
+        alert("Đã xóa sản phẩm.");
+    } catch (error) {
+        alert("Không xóa được trên Firebase. Kiểm tra rules.");
+    }
+}
+
+function deleteAllLocalProducts() {
+    const ok = confirm("Chỉ xóa dữ liệu tạm trên máy này? Dữ liệu Firebase không bị xóa.");
+
+    if (!ok) return;
+
+    localStorage.removeItem("products");
+    localStorage.removeItem("mainProducts");
+    localStorage.removeItem("productsPageCache");
+    localStorage.removeItem("homeProductsCache");
+    localStorage.removeItem("productPricesPageCache");
+
+    sessionStorage.removeItem("homeProducts");
+    sessionStorage.removeItem("homeProductHtml");
+
+    alert("Đã xóa dữ liệu tạm. Bấm Làm mới từ Firebase để tải lại.");
+}
+
+function closeForm() {
+    document.getElementById("productFormBox").classList.add("hidden-form");
+    clearForm();
+}
+
+function clearForm() {
+    document.getElementById("editIndex").value = "";
+    document.getElementById("firebaseId").value = "";
+
+    document.getElementById("productId").value = "";
+    document.getElementById("productName").value = "";
+    document.getElementById("productPrice").value = "";
+    document.getElementById("productWeightPrice").value = "";
+    document.getElementById("productColor").value = "";
+    document.getElementById("productImage").value = "";
+    document.getElementById("productUrl").value = "";
+}
+
+function searchProducts(event) {
+    event.preventDefault();
+
+    currentKeyword = document.getElementById("searchInput").value.trim();
+    displayProducts();
+}
+
+function resetSearch() {
+    currentKeyword = "";
+    document.getElementById("searchInput").value = "";
+    displayProducts();
+}
+
+function openSizeModal(index) {
+    const product = products[index];
+    const modal = document.getElementById("sizeModal");
+    const body = document.getElementById("sizeModalBody");
+
+    if (!product) {
+        body.innerHTML = "<p>Không tìm thấy sản phẩm.</p>";
+        modal.classList.remove("hidden");
+        return;
+    }
+
+    let html = "";
+
+    if (
+        product.sizeChart &&
+        product.sizeChart.sizes &&
+        product.sizeChart.rows &&
+        product.sizeChart.rows.length > 0
+    ) {
+        html += `
+            <div class="size-chart-box">
+                <h3>Bảng size dạng chữ (${safe(product.sizeChart.unit || "CM")})</h3>
+
+                <div class="size-table-scroll">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>AREA</th>
+                                ${product.sizeChart.sizes.map(size => `<th>${safe(size)}</th>`).join("")}
+                            </tr>
+                        </thead>
+
+                        <tbody>
+                            ${product.sizeChart.rows.map(row => `
+                                <tr>
+                                    <td>${safe(row.area)}</td>
+                                    ${product.sizeChart.sizes.map(size => `
+                                        <td>${safe(row[size] || "")}</td>
+                                    `).join("")}
+                                </tr>
+                            `).join("")}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        `;
+    }
+
+    if (product.sizeOptions && product.sizeOptions.length > 0) {
+        const availableSizes = product.sizeOptions
+            .filter(item => item && item.available === true)
+            .map(item => item.size);
+
+        const soldOutSizes = product.sizeOptions
+            .filter(item => item && item.available === false)
+            .map(item => item.size);
+
+        html += `
+            <div class="size-chart-box">
+                <h3>Trạng thái size</h3>
+                <p><b>Còn size:</b> ${availableSizes.length ? availableSizes.map(size => safe(size)).join(", ") : "Không còn size nào"}</p>
+                <p><b>Hết size:</b> ${soldOutSizes.length ? soldOutSizes.map(size => safe(size)).join(", ") : "Không có"}</p>
+            </div>
+        `;
+    } else if (product.availableSizes && product.availableSizes.length > 0) {
+        html += `
+            <div class="size-chart-box">
+                <h3>Size có sẵn</h3>
+                <p><b>${product.availableSizes.map(size => safe(size)).join(", ")}</b></p>
+            </div>
+        `;
+    }
+
+    if (!html) {
+        html = "<p>Chưa có dữ liệu bảng size.</p>";
+    }
+
+    body.innerHTML = html;
+    modal.classList.remove("hidden");
+}
+
+function closeSizeModal() {
+    document.getElementById("sizeModal").classList.add("hidden");
+}
+
+loadProducts(false);
+</script>
+
+<script src="script.js"></script>
+</body>
+</html>

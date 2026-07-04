@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>Quản lý nước</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="layout">
+    <aside class="sidebar" id="sidebar"></aside>
+
+    <main class="main-content">
+        <h1>Quản lý nước</h1>
+
+        <div class="page-note">
+            Mục này dùng để lưu các nước như Spain, France, Germany, Italy.
+            Sau đó qua mục <b>Giá sản phẩm</b> để nhập giá theo từng nước.
+        </div>
+
+        <div class="form-box">
+            <h2 id="formTitle">Thêm nước</h2>
+
+            <input type="hidden" id="countryId">
+
+            <input
+                type="text"
+                id="countryName"
+                placeholder="Tên nước, ví dụ: Spain"
+                required
+            >
+
+            <input
+                type="text"
+                id="currencyCode"
+                placeholder="Đơn vị tiền, ví dụ: EUR"
+                value="EUR"
+                required
+            >
+
+            <input
+                type="text"
+                id="countryNote"
+                placeholder="Ghi chú, ví dụ: Zara Tây Ban Nha"
+            >
+
+            <div class="form-action-row">
+                <button type="button" id="saveCountryBtn" onclick="saveCountry()">
+                    Thêm nước
+                </button>
+
+                <button type="button" class="cancel-btn" onclick="resetForm()">
+                    Hủy
+                </button>
+            </div>
+        </div>
+
+        <button class="pink-btn top-action-btn" onclick="loadCountries(true)">
+            Làm mới từ Firebase
+        </button>
+
+        <h2>Danh sách nước</h2>
+
+        <div class="table-box">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Tên nước</th>
+                        <th>Tiền tệ</th>
+                        <th>Ghi chú</th>
+                        <th>Ngày tạo</th>
+                        <th>Thao tác</th>
+                    </tr>
+                </thead>
+
+                <tbody id="countryList">
+                    <tr>
+                        <td colspan="5">Đang tải dữ liệu...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </main>
+</div>
+
+<script src="script.js"></script>
+
+<script type="module">
+import {
+    safe,
+    getAll,
+    setOne,
+    updateOne,
+    deleteOne,
+    makeKey,
+    now
+} from "./utils.js";
+
+let countries = [];
+let productPrices = [];
+
+window.loadCountries = loadCountries;
+window.saveCountry = saveCountry;
+window.editCountry = editCountry;
+window.deleteCountry = deleteCountry;
+window.resetForm = resetForm;
+
+function clearPageCaches() {
+    localStorage.removeItem("countriesPageCache");
+    localStorage.removeItem("productPricesPageCache");
+    localStorage.removeItem("homeProductsCache");
+    localStorage.removeItem("productsPageCache");
+    localStorage.removeItem("availablePageCache");
+    localStorage.removeItem("ordersPageCache");
+    localStorage.removeItem("historyPageCache");
+}
+
+function getCountryName(country) {
+    return country.countryName || country.country_name || "";
+}
+
+function getCurrencyCode(country) {
+    return country.currencyCode || country.currency_code || "EUR";
+}
+
+function getCountryNote(country) {
+    return country.note || "";
+}
+
+async function loadCountries(forceReload = false) {
+    const countryList = document.getElementById("countryList");
+
+    const cache = localStorage.getItem("countriesPageCache");
+
+    if (!forceReload && cache) {
+        try {
+            const cacheData = JSON.parse(cache);
+
+            countries = cacheData.countries || [];
+            productPrices = cacheData.productPrices || [];
+
+            renderCountries();
+
+            refreshCountriesInBackground();
+            return;
+        } catch (error) {
+            localStorage.removeItem("countriesPageCache");
+        }
+    }
+
+    countryList.innerHTML = `<tr><td colspan="5">Đang tải dữ liệu...</td></tr>`;
+
+    try {
+        countries = await getAll("countries");
+        productPrices = await getAll("product_prices");
+
+        if (countries.length === 0) {
+            await setOne("countries", "spain", {
+                countryName: "Spain",
+                currencyCode: "EUR",
+                note: "Zara Tây Ban Nha",
+                createdAt: now(),
+                updatedAt: now()
+            });
+
+            countries = await getAll("countries");
+        }
+
+        saveCountriesCache();
+        renderCountries();
+    } catch (error) {
+        countryList.innerHTML = `
+            <tr>
+                <td colspan="5">
+                    Không tải được Firebase. Kiểm tra mạng hoặc Firebase rules.
+                </td>
+            </tr>
+        `;
+    }
+}
+
+async function refreshCountriesInBackground() {
+    try {
+        countries = await getAll("countries");
+        productPrices = await getAll("product_prices");
+
+        saveCountriesCache();
+        renderCountries();
+    } catch (error) {
+        console.log("Không cập nhật được Firebase, đang dùng cache nước.");
+    }
+}
+
+function saveCountriesCache() {
+    localStorage.setItem("countriesPageCache", JSON.stringify({
+        countries,
+        productPrices,
+        savedAt: Date.now()
+    }));
+}
+
+function renderCountries() {
+    const countryList = document.getElementById("countryList");
+    countryList.innerHTML = "";
+
+    const list = [...countries].sort((a, b) => {
+        return String(b.createdAt || b.updatedAt || "").localeCompare(String(a.createdAt || a.updatedAt || ""));
+    });
+
+    if (list.length === 0) {
+        countryList.innerHTML = `<tr><td colspan="5">Chưa có nước nào</td></tr>`;
+        return;
+    }
+
+    list.forEach(country => {
+        countryList.innerHTML += `
+            <tr>
+                <td>${safe(getCountryName(country))}</td>
+                <td>${safe(getCurrencyCode(country))}</td>
+                <td>${safe(getCountryNote(country))}</td>
+                <td>${safe(country.createdAt || "")}</td>
+                <td>
+                    <button class="edit-link" onclick="editCountry('${safe(country.id)}')">
+                        Sửa
+                    </button>
+
+                    <button class="delete-link" onclick="deleteCountry('${safe(country.id)}')">
+                        Xóa
+                    </button>
+                </td>
+            </tr>
+        `;
+    });
+}
+
+async function saveCountry() {
+    const countryId = document.getElementById("countryId").value.trim();
+    const countryName = document.getElementById("countryName").value.trim();
+    const currencyCode = document.getElementById("currencyCode").value.trim();
+    const note = document.getElementById("countryNote").value.trim();
+
+    if (!countryName) {
+        alert("Vui lòng nhập tên nước.");
+        return;
+    }
+
+    const data = {
+        countryName,
+        currencyCode: currencyCode || "EUR",
+        note,
+        updatedAt: now()
+    };
+
+    try {
+        if (countryId) {
+            await updateOne("countries", countryId, data);
+        } else {
+            const id = makeKey(countryName);
+
+            await setOne("countries", id, {
+                ...data,
+                createdAt: now()
+            });
+        }
+
+        clearPageCaches();
+
+        await loadCountries(true);
+        resetForm();
+
+        alert(countryId ? "Đã cập nhật nước." : "Đã thêm nước.");
+    } catch (error) {
+        alert("Không lưu được nước. Kiểm tra Firebase rules.");
+    }
+}
+
+function editCountry(id) {
+    const country = countries.find(item => String(item.id) === String(id));
+
+    if (!country) {
+        alert("Không tìm thấy nước.");
+        return;
+    }
+
+    document.getElementById("formTitle").innerText = "Sửa nước";
+    document.getElementById("saveCountryBtn").innerText = "Cập nhật";
+
+    document.getElementById("countryId").value = country.id;
+    document.getElementById("countryName").value = getCountryName(country);
+    document.getElementById("currencyCode").value = getCurrencyCode(country);
+    document.getElementById("countryNote").value = getCountryNote(country);
+
+    window.scrollTo({
+        top: 0,
+        behavior: "smooth"
+    });
+}
+
+async function deleteCountry(id) {
+    const used = productPrices.some(price => String(price.countryId) === String(id));
+
+    if (used) {
+        const okUsed = confirm("Nước này đang có giá sản phẩm. Nếu xóa nước, giá sản phẩm vẫn còn nhưng sẽ mất tên nước. Bạn vẫn muốn xóa?");
+        if (!okUsed) return;
+    } else {
+        const ok = confirm("Xóa nước này?");
+        if (!ok) return;
+    }
+
+    try {
+        await deleteOne("countries", id);
+
+        clearPageCaches();
+
+        await loadCountries(true);
+
+        alert("Đã xóa nước.");
+    } catch (error) {
+        alert("Không xóa được nước. Kiểm tra Firebase rules.");
+    }
+}
+
+function resetForm() {
+    document.getElementById("formTitle").innerText = "Thêm nước";
+    document.getElementById("saveCountryBtn").innerText = "Thêm nước";
+
+    document.getElementById("countryId").value = "";
+    document.getElementById("countryName").value = "";
+    document.getElementById("currencyCode").value = "EUR";
+    document.getElementById("countryNote").value = "";
+}
+
+loadCountries(false);
+</script>
+
+</body>
+</html>

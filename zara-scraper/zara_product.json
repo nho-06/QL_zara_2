@@ -1,0 +1,108 @@
+{
+    "title": "STRIPED KNIT POLO DRESS",
+    "productCode": "5536/052/104",
+    "color": "STRIPED",
+    "originalPriceEur": 29.95,
+    "salePriceEur": 17.97,
+    "priceText": "17.97 EUR",
+    "priceEur": 17.97,
+    "image": "https://static.zara.net/assets/public/44df/ced7/dc9b43f189a2/25745f264cc1/05536052104-p/05536052104-p.jpg?ts=1779202391529&w=594",
+    "description": "",
+    "sizeChart": null,
+    "url": "https://www.zara.com/es/en/striped-polo-dress-p05536052.html?v1=527343415&v2=2726405",
+    "debugPrices": [
+        {
+            "text": "29.95 EUR",
+            "value": 29.95
+        },
+        {
+            "text": "17.97 EUR",
+            "value": 17.97
+        },
+        {
+            "text": "19.95 EUR",
+            "value": 19.95
+        },
+        {
+            "text": "12.96 EUR",
+            "value": 12.96
+        },
+        {
+            "text": "19.46 EUR",
+            "value": 19.46
+        },
+        {
+            "text": "49.95 EUR",
+            "value": 49.95
+        },
+        {
+            "text": "34.96 EUR",
+            "value": 34.96
+        },
+        {
+            "text": "22.95 EUR",
+            "value": 22.95
+        },
+        {
+            "text": "13.77 EUR",
+            "value": 13.77
+        },
+        {
+            "text": "27.95 EUR",
+            "value": 27.95
+        },
+        {
+            "text": "16.77 EUR",
+            "value": 16.77
+        },
+        {
+            "text": "29.97 EUR",
+            "value": 29.97
+        },
+        {
+            "text": "25.95 EUR",
+            "value": 25.95
+        },
+        {
+            "text": "15.57 EUR",
+            "value": 15.57
+        },
+        {
+            "text": "39.95 EUR",
+            "value": 39.95
+        },
+        {
+            "text": "23.97 EUR",
+            "value": 23.97
+        },
+        {
+            "text": "35.95 EUR",
+            "value": 35.95
+        },
+        {
+            "text": "23.36 EUR",
+            "value": 23.36
+        },
+        {
+            "text": "11.97 EUR",
+            "value": 11.97
+        },
+        {
+            "text": "45.95 EUR",
+            "value": 45.95
+        },
+        {
+            "text": "27.57 EUR",
+            "value": 27.57
+        },
+        {
+            "text": "17.95 EUR",
+            "value": 17.95
+        },
+        {
+            "text": "10.77 EUR",
+            "value": 10.77
+        }
+    ],
+    "sizeChartImage": "uploads/size_chart_1782376551482.png"
+}

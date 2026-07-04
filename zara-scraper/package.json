@@ -1,0 +1,16 @@
+{
+  "name": "zara-server",
+  "version": "1.0.0",
+  "description": "Server lay du lieu Zara bang Node.js va Playwright",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.18.3",
+    "nodemailer": "^9.0.3",
+    "playwright": "^1.49.1"
+  }
+}

@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>Order khách hàng</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="layout">
+    <aside class="sidebar" id="sidebar"></aside>
+
+    <main class="main-content">
+        <h1>Danh mục order</h1>
+
+        <div class="page-note">
+            Đây là danh sách khách đang order. Khi khách đã mua, đã trả, đã giao hàng thì bấm <b>Đã giao hàng</b>.
+        </div>
+
+        <button class="pink-btn top-action-btn" onclick="loadOrders(true)">
+            Làm mới từ Firebase
+        </button>
+
+        <form class="search-box" onsubmit="searchOrders(event)">
+            <input
+                type="text"
+                id="searchInput"
+                placeholder="Tìm kiếm theo tên khách, SĐT, địa chỉ, tên sản phẩm, ID, màu, size"
+            >
+
+            <button type="submit">Tìm kiếm</button>
+            <button type="button" class="cancel-btn" onclick="resetSearch()">Làm mới</button>
+        </form>
+
+        <h2>Danh sách order</h2>
+
+        <div class="table-box">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Ảnh</th>
+                        <th>Khách</th>
+                        <th>SĐT</th>
+                        <th>Địa chỉ</th>
+                        <th>Sản phẩm</th>
+                        <th>Nước</th>
+                        <th>Nấc giá</th>
+                        <th>Màu</th>
+                        <th>Size</th>
+                        <th>SL</th>
+                        <th>Tổng tiền</th>
+                        <th>Đã cọc</th>
+                        <th>Còn lại</th>
+                        <th>Loại</th>
+                        <th>Ngày tạo</th>
+                        <th>Thao tác</th>
+                    </tr>
+                </thead>
+
+                <tbody id="orderList">
+                    <tr>
+                        <td colspan="16">Đang tải dữ liệu...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </main>
+</div>
+
+<div id="editOrderModal" class="modal hidden">
+    <div class="modal-content">
+        <h2>Sửa order</h2>
+
+        <div class="readonly-order-info">
+            <p><b>Sản phẩm:</b> <span id="modalProductInfo"></span></p>
+            <p><b>Giá bán:</b> <span id="modalProductPrice"></span></p>
+            <p class="lock-text">Không được sửa sản phẩm. Chỉ sửa khách, màu, size, số lượng, tiền cọc.</p>
+        </div>
+
+        <form onsubmit="updateOrder(event)">
+            <input type="hidden" id="modalOrderId">
+
+            <input type="text" id="modalCustomerName" placeholder="Tên khách hàng" required>
+            <input type="text" id="modalPhone" placeholder="Số điện thoại">
+            <input type="text" id="modalAddress" placeholder="Địa chỉ">
+
+            <input type="text" id="modalColorInput" placeholder="Màu khách chọn">
+            <input type="text" id="modalSizeInput" placeholder="Size khách chọn">
+            <input type="number" id="modalQuantityInput" placeholder="Số lượng" min="1" required>
+            <input type="number" id="modalDepositInput" placeholder="Số tiền đã cọc">
+
+            <div class="form-action-row">
+                <button type="submit">Cập nhật order</button>
+                <button type="button" class="cancel-btn" onclick="closeEditOrderModal()">Hủy</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script src="script.js"></script>
+
+<script type="module">
+import {
+    safe,
+    moneyVnd,
+    moneyEur,
+    getAll,
+    updateOne,
+    deleteOne,
+    now,
+    getDefaultRate,
+    eurToVnd
+} from "./utils.js";
+
+let orders = [];
+let products = [];
+let productPrices = [];
+let countries = [];
+let defaultRate = 31500;
+let currentKeyword = "";
+
+window.loadOrders = loadOrders;
+window.searchOrders = searchOrders;
+window.resetSearch = resetSearch;
+window.openEditOrderModal = openEditOrderModal;
+window.closeEditOrderModal = closeEditOrderModal;
+window.updateOrder = updateOrder;
+window.deleteOrder = deleteOrder;
+window.markDelivered = markDelivered;
+
+function clearPageCaches() {
+    localStorage.removeItem("ordersPageCache");
+    localStorage.removeItem("historyPageCache");
+    localStorage.removeItem("homeProductsCache");
+    localStorage.removeItem("productsPageCache");
+}
+
+function safeNumber(value) {
+    const number = Number(value || 0);
+    return isNaN(number) ? 0 : number;
+}
+
+function getProductById(id) {
+    return products.find(product => String(product.id) === String(id)) || null;
+}
+
+function getCountryById(id) {
+    return countries.find(country => String(country.id) === String(id)) || null;
+}
+
+function getActivePrice(productId) {
+    return productPrices.find(price =>
+        String(price.productId) === String(productId) &&
+        price.isActive === true
+    ) || null;
+}
+
+function getProductCode(product) {
+    return product?.productCode || product?.product_code || product?.id || "";
+}
+
+function getProductName(product) {
+    return product?.name || product?.title || "";
+}
+
+function getProductImage(product) {
+    return product?.productOnlyImage || product?.imageUrl || product?.image || product?.modelImage || "";
+}
+
+function getProductWeight(product) {
+    return safeNumber(
+        product?.weightPrice ||
+        product?.weightPriceVnd ||
+        product?.weight_price_vnd ||
+        0
+    );
+}
+
+function getCountryName(country) {
+    return country?.countryName || country?.country_name || "";
+}
+
+function getFinalPrice(productId) {
+    const product = getProductById(productId);
+    const activePrice = getActivePrice(productId);
+
+    if (!activePrice) {
+        return 0;
+    }
+
+    const priceEur = safeNumber(activePrice.priceEur);
+    const converted = activePrice.priceVnd
+        ? safeNumber(activePrice.priceVnd)
+        : eurToVnd(priceEur, defaultRate);
+
+    const weight = getProductWeight(product);
+
+    return converted + weight;
+}
+
+async function loadOrders(forceReload = false) {
+    const orderList = document.getElementById("orderList");
+
+    const cache = localStorage.getItem("ordersPageCache");
+
+    if (!forceReload && cache) {
+        try {
+            const cacheData = JSON.parse(cache);
+
+            orders = cacheData.orders || [];
+            products = cacheData.products || [];
+            productPrices = cacheData.productPrices || [];
+            countries = cacheData.countries || [];
+            defaultRate = cacheData.defaultRate || 31500;
+
+            renderOrders();
+            refreshOrdersInBackground();
+            return;
+        } catch (error) {
+            localStorage.removeItem("ordersPageCache");
+        }
+    }
+
+    orderList.innerHTML = `<tr><td colspan="16">Đang tải dữ liệu...</td></tr>`;
+
+    try {
+        orders = await getAll("orders");
+        products = await getAll("products");
+        productPrices = await getAll("product_prices");
+        countries = await getAll("countries");
+        defaultRate = await getDefaultRate();
+
+        saveOrdersCache();
+        renderOrders();
+    } catch (error) {
+        orderList.innerHTML = `
+            <tr>
+                <td colspan="16">
+                    Không tải được Firebase. Kiểm tra mạng hoặc Firebase rules.
+                </td>
+            </tr>
+        `;
+    }
+}
+
+async function refreshOrdersInBackground() {
+    try {
+        orders = await getAll("orders");
+        products = await getAll("products");
+        productPrices = await getAll("product_prices");
+        countries = await getAll("countries");
+        defaultRate = await getDefaultRate();
+
+        saveOrdersCache();
+        renderOrders();
+    } catch (error) {
+        console.log("Không cập nhật được Firebase, đang dùng cache order.");
+    }
+}
+
+function saveOrdersCache() {
+    localStorage.setItem("ordersPageCache", JSON.stringify({
+        orders,
+        products,
+        productPrices,
+        countries,
+        defaultRate,
+        savedAt: Date.now()
+    }));
+}
+
+function renderOrders() {
+    const orderList = document.getElementById("orderList");
+    orderList.innerHTML = "";
+
+    let list = orders.filter(order => {
+        return order.orderStatus === "ordering" ||
+               order.order_status === "ordering" ||
+               !order.orderStatus && !order.order_status;
+    });
+
+    if (currentKeyword.trim() !== "") {
+        const keyword = currentKeyword.toLowerCase();
+
+        list = list.filter(order => {
+            const product = getProductById(order.productId);
+
+            const text = `
+                ${order.customerName || order.customer_name || ""}
+                ${order.phone || ""}
+                ${order.address || ""}
+                ${order.color || ""}
+                ${order.size || ""}
+                ${getProductCode(product)}
+                ${getProductName(product)}
+                ${order.productCode || ""}
+                ${order.productName || ""}
+            `.toLowerCase();
+
+            return text.includes(keyword);
+        });
+    }
+
+    list.sort((a, b) => {
+        return String(b.createdAt || b.created_at || "").localeCompare(String(a.createdAt || a.created_at || ""));
+    });
+
+    if (list.length === 0) {
+        orderList.innerHTML = `<tr><td colspan="16">Không tìm thấy order nào</td></tr>`;
+        return;
+    }
+
+    list.forEach(order => {
+        const product = getProductById(order.productId);
+        const activePrice = getActivePrice(order.productId);
+        const country = activePrice ? getCountryById(activePrice.countryId) : null;
+
+        const image = order.imageUrl || getProductImage(product);
+        const productCode = order.productCode || getProductCode(product);
+        const productName = order.productName || getProductName(product);
+
+        const quantity = safeNumber(order.quantity || 1);
+        const depositMoney = safeNumber(order.depositMoney || order.deposit_money || 0);
+
+        let finalUnitPrice = getFinalPrice(order.productId);
+
+        if (finalUnitPrice <= 0 && order.totalMoney) {
+            finalUnitPrice = safeNumber(order.totalMoney) / Math.max(quantity, 1);
+        }
+
+        const totalMoney = order.totalMoney !== undefined
+            ? safeNumber(order.totalMoney)
+            : finalUnitPrice * quantity;
+
+        const remainingMoney = order.remainingMoney !== undefined
+            ? safeNumber(order.remainingMoney)
+            : totalMoney - depositMoney;
+
+        orderList.innerHTML += `
+            <tr>
+                <td>
+                    ${image ? `<img src="${safe(image)}" alt="Ảnh">` : "Chưa có ảnh"}
+                </td>
+
+                <td>${safe(order.customerName || order.customer_name || "")}</td>
+                <td>${safe(order.phone || "Chưa nhập")}</td>
+                <td>${safe(order.address || "Chưa nhập")}</td>
+
+                <td>
+                    ${safe(productCode)}<br>
+                    ${safe(productName)}
+                </td>
+
+                <td>${safe(getCountryName(country))}</td>
+                <td>${safe(activePrice?.priceLabel || "")}</td>
+
+                <td>${safe(order.color || "")}</td>
+                <td>${safe(order.size || "")}</td>
+                <td>${safe(quantity)}</td>
+
+                <td>${moneyVnd(totalMoney)}</td>
+                <td>${moneyVnd(depositMoney)}</td>
+                <td>${moneyVnd(remainingMoney)}</td>
+
+                <td>${safe(order.orderType || order.order_type || "Khách order")}</td>
+                <td>${safe(order.createdAt || order.created_at || "")}</td>
+
+                <td>
+                    <button class="edit-link" onclick="openEditOrderModal('${safe(order.id)}')">
+                        Sửa
+                    </button>
+
+                    <button class="success-link" onclick="markDelivered('${safe(order.id)}')">
+                        Đã giao hàng
+                    </button>
+
+                    <button class="delete-link" onclick="deleteOrder('${safe(order.id)}')">
+                        Xóa
+                    </button>
+                </td>
+            </tr>
+        `;
+    });
+}
+
+function openEditOrderModal(id) {
+    const order = orders.find(item => String(item.id) === String(id));
+
+    if (!order) {
+        alert("Không tìm thấy order.");
+        return;
+    }
+
+    const product = getProductById(order.productId);
+    const productCode = order.productCode || getProductCode(product);
+    const productName = order.productName || getProductName(product);
+
+    const finalPrice = getFinalPrice(order.productId);
+
+    document.getElementById("modalOrderId").value = order.id;
+
+    document.getElementById("modalCustomerName").value = order.customerName || order.customer_name || "";
+    document.getElementById("modalPhone").value = order.phone || "";
+    document.getElementById("modalAddress").value = order.address || "";
+
+    document.getElementById("modalProductInfo").innerText = `${productCode} - ${productName}`;
+    document.getElementById("modalProductPrice").innerText = finalPrice > 0 ? moneyVnd(finalPrice) : "Chưa có giá";
+
+    document.getElementById("modalColorInput").value = order.color || "";
+    document.getElementById("modalSizeInput").value = order.size || "";
+    document.getElementById("modalQuantityInput").value = order.quantity || 1;
+    document.getElementById("modalDepositInput").value = order.depositMoney || order.deposit_money || 0;
+
+    document.getElementById("editOrderModal").classList.remove("hidden");
+}
+
+function closeEditOrderModal() {
+    document.getElementById("editOrderModal").classList.add("hidden");
+}
+
+async function updateOrder(event) {
+    event.preventDefault();
+
+    const id = document.getElementById("modalOrderId").value;
+    const order = orders.find(item => String(item.id) === String(id));
+
+    if (!order) {
+        alert("Không tìm thấy order.");
+        return;
+    }
+
+    const customerName = document.getElementById("modalCustomerName").value.trim();
+    const phone = document.getElementById("modalPhone").value.trim();
+    const address = document.getElementById("modalAddress").value.trim();
+    const color = document.getElementById("modalColorInput").value.trim();
+    const size = document.getElementById("modalSizeInput").value.trim();
+    const quantity = safeNumber(document.getElementById("modalQuantityInput").value);
+    const depositMoney = safeNumber(document.getElementById("modalDepositInput").value);
+
+    if (!customerName || quantity <= 0) {
+        alert("Vui lòng nhập tên khách và số lượng hợp lệ.");
+        return;
+    }
+
+    let finalUnitPrice = getFinalPrice(order.productId);
+
+    if (finalUnitPrice <= 0 && order.totalMoney) {
+        finalUnitPrice = safeNumber(order.totalMoney) / Math.max(safeNumber(order.quantity || 1), 1);
+    }
+
+    const totalMoney = finalUnitPrice * quantity;
+    const remainingMoney = totalMoney - depositMoney;
+
+    try {
+        await updateOne("orders", id, {
+            customerName,
+            phone,
+            address,
+            color,
+            size,
+            quantity,
+            depositMoney,
+            totalMoney,
+            remainingMoney,
+            updatedAt: now()
+        });
+
+        clearPageCaches();
+
+        await loadOrders(true);
+        closeEditOrderModal();
+
+        alert("Đã cập nhật order.");
+    } catch (error) {
+        alert("Không cập nhật được order. Kiểm tra Firebase rules.");
+    }
+}
+
+async function deleteOrder(id) {
+    const ok = confirm("Xóa order này?");
+
+    if (!ok) return;
+
+    try {
+        await deleteOne("orders", id);
+
+        clearPageCaches();
+        await loadOrders(true);
+
+        alert("Đã xóa order.");
+    } catch (error) {
+        alert("Không xóa được order. Kiểm tra Firebase rules.");
+    }
+}
+
+async function markDelivered(id) {
+    const ok = confirm("Xác nhận đơn này đã giao hàng?");
+
+    if (!ok) return;
+
+    try {
+        await updateOne("orders", id, {
+            orderStatus: "delivered",
+            deliveredAt: now(),
+            updatedAt: now()
+        });
+
+        clearPageCaches();
+        await loadOrders(true);
+
+        alert("Đã chuyển order sang lịch sử.");
+    } catch (error) {
+        alert("Không cập nhật được trạng thái. Kiểm tra Firebase rules.");
+    }
+}
+
+function searchOrders(event) {
+    event.preventDefault();
+
+    currentKeyword = document.getElementById("searchInput").value.trim();
+    renderOrders();
+}
+
+function resetSearch() {
+    currentKeyword = "";
+    document.getElementById("searchInput").value = "";
+    renderOrders();
+}
+
+loadOrders(false);
+</script>
+
+</body>
+</html>

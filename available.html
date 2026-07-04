@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>Hàng sẵn</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="layout">
+    <aside class="sidebar" id="sidebar"></aside>
+
+    <main class="main-content">
+        <h1>Danh mục hàng sẵn</h1>
+
+        <div class="page-note">
+            Hàng sẵn là sản phẩm có sẵn trong kho. Có thể thêm từ trang này hoặc từ Trang chủ.
+            Trang này dùng dữ liệu từ <b>Firebase</b>.
+        </div>
+
+        <button class="pink-btn top-action-btn" onclick="openAddAvailableModal()">
+            + Thêm hàng sẵn
+        </button>
+
+        <button class="pink-btn top-action-btn" onclick="loadData(true)">
+            Làm mới từ Firebase
+        </button>
+
+        <form class="search-box" onsubmit="searchAvailable(event)">
+            <input
+                type="text"
+                id="searchInput"
+                placeholder="Tìm theo tên, ID, màu hoặc size"
+            >
+
+            <button type="submit">Tìm kiếm</button>
+            <button type="button" class="cancel-btn" onclick="resetSearch()">Làm mới</button>
+        </form>
+
+        <h2>Danh sách hàng sẵn</h2>
+
+        <div class="table-box">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Ảnh</th>
+                        <th>ID sản phẩm</th>
+                        <th>Tên</th>
+                        <th>Nước</th>
+                        <th>Nấc giá</th>
+                        <th>Giá EUR</th>
+                        <th>Giá sau quy đổi</th>
+                        <th>Giá cân</th>
+                        <th>Giá bán</th>
+                        <th>Số lượng</th>
+                        <th>Size</th>
+                        <th>Màu</th>
+                        <th>Thao tác</th>
+                    </tr>
+                </thead>
+
+                <tbody id="availableList">
+                    <tr>
+                        <td colspan="13">Đang tải dữ liệu...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </main>
+</div>
+
+<div id="addAvailableModal" class="modal hidden">
+    <div class="modal-content">
+        <h2>Thêm vào hàng sẵn</h2>
+
+        <div class="readonly-order-info" id="selectedProductInfo">
+            <p class="lock-text">Chọn sản phẩm, nhập số lượng, size và màu.</p>
+        </div>
+
+        <form onsubmit="saveAvailable(event)">
+            <input type="hidden" id="editAvailableId">
+
+            <select id="availableProductId" onchange="renderSelectedProductInfo()" required>
+                <option value="">-- Chọn sản phẩm --</option>
+            </select>
+
+            <input
+                type="number"
+                id="availableQuantity"
+                placeholder="Số lượng có sẵn"
+                min="1"
+                required
+            >
+
+            <input
+                type="text"
+                id="availableSize"
+                placeholder="Size, ví dụ: S, M, L hoặc Freesize"
+            >
+
+            <input
+                type="text"
+                id="availableColor"
+                placeholder="Màu, ví dụ: trắng, đen, hồng"
+            >
+
+            <div class="form-action-row">
+                <button class="heart-btn" type="submit" id="saveAvailableBtn">
+                    ♡ Lưu vào sẵn
+                </button>
+
+                <button type="button" class="cancel-btn" onclick="closeAddAvailableModal()">
+                    Hủy
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script src="script.js"></script>
+
+<script type="module">
+import {
+    safe,
+    moneyVnd,
+    moneyEur,
+    getAll,
+    sortProductsNewestFirst,
+    addOne,
+    updateOne,
+    deleteOne,
+    now,
+    getDefaultRate,
+    eurToVnd
+} from "./utils.js";
+
+let products = [];
+let countries = [];
+let productPrices = [];
+let availableProducts = [];
+let defaultRate = 31500;
+let currentKeyword = "";
+
+window.loadData = loadData;
+window.searchAvailable = searchAvailable;
+window.resetSearch = resetSearch;
+window.openAddAvailableModal = openAddAvailableModal;
+window.closeAddAvailableModal = closeAddAvailableModal;
+window.saveAvailable = saveAvailable;
+window.editAvailable = editAvailable;
+window.deleteAvailable = deleteAvailable;
+window.renderSelectedProductInfo = renderSelectedProductInfo;
+
+function clearPageCaches() {
+    localStorage.removeItem("homeProductsCache");
+    localStorage.removeItem("productsPageCache");
+    localStorage.removeItem("availablePageCache");
+}
+
+function safeNumber(value) {
+    const number = Number(value || 0);
+    return isNaN(number) ? 0 : number;
+}
+
+function getProductById(id) {
+    return products.find(product => String(product.id) === String(id)) || null;
+}
+
+function getCountryById(id) {
+    return countries.find(country => String(country.id) === String(id)) || null;
+}
+
+function getActivePrice(productId) {
+    return productPrices.find(price =>
+        String(price.productId) === String(productId) &&
+        price.isActive === true
+    ) || null;
+}
+
+function getProductCode(product) {
+    return product?.productCode || product?.product_code || product?.id || "";
+}
+
+function getProductName(product) {
+    return product?.name || product?.title || "";
+}
+
+function getProductImage(product) {
+    return product?.productOnlyImage || product?.imageUrl || product?.image || product?.modelImage || "";
+}
+
+function getProductWeight(product) {
+    return safeNumber(
+        product?.weightPrice ||
+        product?.weightPriceVnd ||
+        product?.weight_price_vnd ||
+        0
+    );
+}
+
+function getCountryName(country) {
+    return country?.countryName || country?.country_name || "Spain";
+}
+
+function getCurrencyCode(country) {
+    return country?.currencyCode || country?.currency_code || "EUR";
+}
+
+async function loadData(forceReload = false) {
+    const availableList = document.getElementById("availableList");
+
+    const cache = localStorage.getItem("availablePageCache");
+
+    if (!forceReload && cache) {
+        try {
+            const cacheData = JSON.parse(cache);
+
+            products = sortProductsNewestFirst(cacheData.products || []);
+            countries = cacheData.countries || [];
+            productPrices = cacheData.productPrices || [];
+            availableProducts = cacheData.availableProducts || [];
+            defaultRate = cacheData.defaultRate || 31500;
+
+            renderProductSelect();
+            renderAvailableList();
+
+            refreshDataInBackground();
+            return;
+        } catch (error) {
+            localStorage.removeItem("availablePageCache");
+        }
+    }
+
+    availableList.innerHTML = `<tr><td colspan="13">Đang tải dữ liệu...</td></tr>`;
+
+    try {
+        products = sortProductsNewestFirst(await getAll("products"));
+        countries = await getAll("countries");
+        productPrices = await getAll("product_prices");
+        availableProducts = await getAll("available_products");
+        defaultRate = await getDefaultRate();
+
+        localStorage.setItem("availablePageCache", JSON.stringify({
+            products,
+            countries,
+            productPrices,
+            availableProducts,
+            defaultRate,
+            savedAt: Date.now()
+        }));
+
+        renderProductSelect();
+        renderAvailableList();
+    } catch (error) {
+        availableList.innerHTML = `
+            <tr>
+                <td colspan="13">
+                    Không tải được Firebase. Kiểm tra mạng hoặc Firebase rules.
+                </td>
+            </tr>
+        `;
+    }
+}
+
+async function refreshDataInBackground() {
+    try {
+        products = sortProductsNewestFirst(await getAll("products"));
+        countries = await getAll("countries");
+        productPrices = await getAll("product_prices");
+        availableProducts = await getAll("available_products");
+        defaultRate = await getDefaultRate();
+
+        localStorage.setItem("availablePageCache", JSON.stringify({
+            products,
+            countries,
+            productPrices,
+            availableProducts,
+            defaultRate,
+            savedAt: Date.now()
+        }));
+
+        renderProductSelect();
+        renderAvailableList();
+    } catch (error) {
+        console.log("Không cập nhật được Firebase, đang dùng cache hàng sẵn.");
+    }
+}
+
+function renderProductSelect() {
+    const select = document.getElementById("availableProductId");
+    const currentValue = select.value;
+
+    select.innerHTML = `<option value="">-- Chọn sản phẩm --</option>`;
+
+    const sortedProducts = sortProductsNewestFirst(products);
+
+    sortedProducts.forEach(product => {
+        select.innerHTML += `
+            <option value="${safe(product.id)}">
+                ${safe(getProductCode(product))} - ${safe(getProductName(product))}
+            </option>
+        `;
+    });
+
+    if (currentValue) {
+        select.value = currentValue;
+    }
+}
+
+function renderAvailableList() {
+    const availableList = document.getElementById("availableList");
+    availableList.innerHTML = "";
+
+    let list = [...availableProducts];
+
+    if (currentKeyword.trim() !== "") {
+        const keyword = currentKeyword.toLowerCase();
+
+        list = list.filter(item => {
+            const product = getProductById(item.productId);
+
+            const text = `
+                ${getProductCode(product)}
+                ${getProductName(product)}
+                ${item.color || ""}
+                ${item.size || ""}
+            `.toLowerCase();
+
+            return text.includes(keyword);
+        });
+    }
+
+    list.sort((a, b) => {
+        return String(b.createdAt || b.updatedAt || "").localeCompare(String(a.createdAt || a.updatedAt || ""));
+    });
+
+    if (list.length === 0) {
+        availableList.innerHTML = `<tr><td colspan="13">Không tìm thấy sản phẩm sẵn nào</td></tr>`;
+        return;
+    }
+
+    list.forEach(item => {
+        const product = getProductById(item.productId);
+        const activePrice = getActivePrice(item.productId);
+        const country = activePrice ? getCountryById(activePrice.countryId) : null;
+
+        const image = getProductImage(product);
+        const weightPrice = getProductWeight(product);
+
+        let priceHtml = "";
+
+        if (activePrice) {
+            const priceEur = safeNumber(activePrice.priceEur);
+            const converted = activePrice.priceVnd
+                ? safeNumber(activePrice.priceVnd)
+                : eurToVnd(priceEur, defaultRate);
+
+            const finalPrice = converted + weightPrice;
+
+            priceHtml = `
+                <td>${safe(getCountryName(country))}</td>
+                <td>${safe(activePrice.priceLabel || "")}</td>
+                <td>${moneyEur(priceEur)}</td>
+                <td>${moneyVnd(converted)}</td>
+                <td>${weightPrice > 0 ? moneyVnd(weightPrice) : "0 đ"}</td>
+                <td><b>${moneyVnd(finalPrice)}</b></td>
+            `;
+        } else {
+            priceHtml = `<td colspan="6" class="lock-text">Chưa chọn giá đang dùng</td>`;
+        }
+
+        availableList.innerHTML += `
+            <tr>
+                <td>
+                    ${image ? `<img src="${safe(image)}" alt="Ảnh">` : "Chưa có ảnh"}
+                </td>
+
+                <td>${safe(getProductCode(product))}</td>
+                <td>${safe(getProductName(product))}</td>
+
+                ${priceHtml}
+
+                <td>${safe(item.quantity || 0)}</td>
+                <td>${safe(item.size || "")}</td>
+                <td>${safe(item.color || "")}</td>
+
+                <td>
+                    <button class="edit-link" onclick="editAvailable('${safe(item.id)}')">
+                        Sửa
+                    </button>
+
+                    <button class="delete-link" onclick="deleteAvailable('${safe(item.id)}')">
+                        Xóa
+                    </button>
+                </td>
+            </tr>
+        `;
+    });
+}
+
+function renderSelectedProductInfo() {
+    const productId = document.getElementById("availableProductId").value;
+    const info = document.getElementById("selectedProductInfo");
+
+    const product = getProductById(productId);
+
+    if (!product) {
+        info.innerHTML = `<p class="lock-text">Chọn sản phẩm, nhập số lượng, size và màu.</p>`;
+        return;
+    }
+
+    const activePrice = getActivePrice(productId);
+    const country = activePrice ? getCountryById(activePrice.countryId) : null;
+    const weightPrice = getProductWeight(product);
+
+    if (!activePrice) {
+        info.innerHTML = `
+            <p><b>Sản phẩm:</b> ${safe(getProductCode(product))} - ${safe(getProductName(product))}</p>
+            <p class="lock-text">Sản phẩm này chưa chọn giá đang dùng.</p>
+            <p class="lock-text">Chỉ nhập số lượng, size và màu.</p>
+        `;
+        return;
+    }
+
+    const priceEur = safeNumber(activePrice.priceEur);
+    const converted = activePrice.priceVnd
+        ? safeNumber(activePrice.priceVnd)
+        : eurToVnd(priceEur, defaultRate);
+
+    const finalPrice = converted + weightPrice;
+
+    info.innerHTML = `
+        <p><b>Sản phẩm:</b> ${safe(getProductCode(product))} - ${safe(getProductName(product))}</p>
+        <p><b>Nước:</b> ${safe(getCountryName(country))}</p>
+        <p><b>Nấc giá:</b> ${safe(activePrice.priceLabel || "")}</p>
+        <p><b>Giá sau quy đổi:</b> ${moneyVnd(converted)}</p>
+        <p><b>Giá cân:</b> ${weightPrice > 0 ? moneyVnd(weightPrice) : "0 đ"}</p>
+        <p><b>Giá bán:</b> ${moneyVnd(finalPrice)}</p>
+        <p class="lock-text">Chỉ nhập số lượng, size và màu.</p>
+    `;
+}
+
+function openAddAvailableModal() {
+    resetAvailableForm();
+
+    const params = new URLSearchParams(window.location.search);
+    const productIdFromUrl = params.get("product_id");
+
+    if (productIdFromUrl) {
+        document.getElementById("availableProductId").value = productIdFromUrl;
+    }
+
+    renderSelectedProductInfo();
+
+    document.getElementById("addAvailableModal").classList.remove("hidden");
+}
+
+function closeAddAvailableModal() {
+    document.getElementById("addAvailableModal").classList.add("hidden");
+}
+
+async function saveAvailable(event) {
+    event.preventDefault();
+
+    const editId = document.getElementById("editAvailableId").value.trim();
+    const productId = document.getElementById("availableProductId").value.trim();
+    const quantity = safeNumber(document.getElementById("availableQuantity").value);
+    const size = document.getElementById("availableSize").value.trim();
+    const color = document.getElementById("availableColor").value.trim();
+
+    if (!productId || quantity <= 0) {
+        alert("Vui lòng chọn sản phẩm và nhập số lượng lớn hơn 0.");
+        return;
+    }
+
+    const data = {
+        productId,
+        quantity,
+        size,
+        color,
+        updatedAt: now()
+    };
+
+    try {
+        if (editId) {
+            await updateOne("available_products", editId, data);
+        } else {
+            await addOne("available_products", {
+                ...data,
+                createdAt: now()
+            });
+        }
+
+        clearPageCaches();
+
+        await loadData(true);
+        closeAddAvailableModal();
+
+        alert(editId ? "Đã cập nhật hàng sẵn." : "Đã thêm vào hàng sẵn.");
+    } catch (error) {
+        alert("Không lưu được hàng sẵn. Kiểm tra Firebase rules.");
+    }
+}
+
+function editAvailable(id) {
+    const item = availableProducts.find(row => String(row.id) === String(id));
+
+    if (!item) {
+        alert("Không tìm thấy hàng sẵn cần sửa.");
+        return;
+    }
+
+    document.getElementById("editAvailableId").value = item.id;
+    document.getElementById("availableProductId").value = item.productId || "";
+    document.getElementById("availableQuantity").value = item.quantity || "";
+    document.getElementById("availableSize").value = item.size || "";
+    document.getElementById("availableColor").value = item.color || "";
+    document.getElementById("saveAvailableBtn").innerText = "Cập nhật hàng sẵn";
+
+    renderSelectedProductInfo();
+
+    document.getElementById("addAvailableModal").classList.remove("hidden");
+}
+
+async function deleteAvailable(id) {
+    const ok = confirm("Xóa sản phẩm sẵn này?");
+
+    if (!ok) return;
+
+    try {
+        await deleteOne("available_products", id);
+
+        clearPageCaches();
+
+        await loadData(true);
+
+        alert("Đã xóa hàng sẵn.");
+    } catch (error) {
+        alert("Không xóa được hàng sẵn. Kiểm tra Firebase rules.");
+    }
+}
+
+function resetAvailableForm() {
+    document.getElementById("editAvailableId").value = "";
+    document.getElementById("availableProductId").value = "";
+    document.getElementById("availableQuantity").value = "";
+    document.getElementById("availableSize").value = "";
+    document.getElementById("availableColor").value = "";
+    document.getElementById("saveAvailableBtn").innerText = "♡ Lưu vào sẵn";
+    renderSelectedProductInfo();
+}
+
+function searchAvailable(event) {
+    event.preventDefault();
+
+    currentKeyword = document.getElementById("searchInput").value.trim();
+    renderAvailableList();
+}
+
+function resetSearch() {
+    currentKeyword = "";
+    document.getElementById("searchInput").value = "";
+    renderAvailableList();
+}
+
+loadData(false);
+</script>
+
+</body>
+</html>

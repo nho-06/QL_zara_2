@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>Danh mục canh back size</title>
+    <link rel="stylesheet" href="style.css">
+
+    <style>
+        .toast-message {
+            position: fixed;
+            top: 18px;
+            right: 18px;
+            z-index: 9999;
+            background: #9b4a60;
+            color: #fff;
+            padding: 12px 18px;
+            border-radius: 12px;
+            font-weight: 600;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+            opacity: 0;
+            transform: translateY(-10px);
+            transition: 0.25s ease;
+            pointer-events: none;
+        }
+
+        .toast-message.show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .toast-message.error {
+            background: #b3261e;
+        }
+
+        .delete-confirm-info {
+            margin: 14px 0;
+            padding: 14px;
+            border-radius: 12px;
+            background: #fff2f5;
+            color: #333;
+            line-height: 1.6;
+        }
+
+        .delete-confirm-info b {
+            color: #9b4a60;
+        }
+
+        .danger-btn {
+            background: #b3261e !important;
+            color: #fff !important;
+        }
+
+        .watch-summary {
+            display: inline-block;
+            margin-bottom: 16px;
+            padding: 16px 22px;
+            border-radius: 16px;
+            background: #fff;
+            color: #333;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+            font-size: 20px;
+            font-weight: 700;
+        }
+
+        .watch-summary b {
+            color: #f25291;
+            font-size: 24px;
+        }
+
+        .watch-card-title {
+            margin-bottom: 10px;
+            line-height: 1.25;
+        }
+
+        .watch-card-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin: 8px 0;
+        }
+
+        .watch-card-meta span {
+            background: #f4f4f6;
+            padding: 6px 10px;
+            border-radius: 999px;
+            font-weight: 700;
+            font-size: 14px;
+        }
+
+        .watch-email {
+            margin: 8px 0;
+            color: #555;
+            word-break: break-word;
+            font-size: 14px;
+            line-height: 1.35;
+        }
+
+        .watch-status-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin: 10px 0;
+        }
+
+        .watch-status-row span {
+            background: #fff2f5;
+            padding: 7px 10px;
+            border-radius: 10px;
+            font-weight: 700;
+            font-size: 14px;
+        }
+
+        .watch-size-line {
+            margin: 6px 0;
+            font-size: 15px;
+            line-height: 1.35;
+        }
+
+        .watch-time {
+            margin: 8px 0 12px;
+            color: #666;
+            font-size: 14px;
+        }
+
+        .watch-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 12px;
+        }
+
+        .watch-actions button {
+            flex: 1;
+            min-width: 90px;
+            padding: 12px 10px;
+            border-radius: 12px;
+            font-size: 15px;
+            line-height: 1.2;
+        }
+
+        @media (max-width: 700px) {
+            .watch-actions {
+                flex-wrap: wrap;
+            }
+
+            .watch-actions button {
+                min-width: 100px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+<div id="toastMessage" class="toast-message"></div>
+
+<div class="layout">
+    <aside class="sidebar" id="sidebar"></aside>
+
+    <main class="main-content">
+        <h1>Danh mục canh back size</h1>
+
+        <div class="filter-row">
+            <button type="button" class="pink-btn" onclick="loadStockAlerts()">Làm mới</button>
+            <button type="button" class="pink-btn" onclick="window.location.href='index.html'">Về trang chủ</button>
+        </div>
+
+        <div id="watchSummary" class="watch-summary">
+            Tổng sản phẩm cần canh: <b id="watchTotal">0</b>
+        </div>
+
+        <div id="alertList" class="product-card-list"></div>
+    </main>
+</div>
+
+<div id="deleteModal" class="modal hidden">
+    <div class="modal-content">
+        <button type="button" class="modal-close-btn" onclick="closeDeleteModal()">×</button>
+
+        <h2>Xóa khỏi canh back?</h2>
+
+        <div class="delete-confirm-info">
+            <p><b>Sản phẩm:</b> <span id="deleteProductName"></span></p>
+            <p><b>Mã sản phẩm:</b> <span id="deleteProductCode"></span></p>
+            <p><b>Size đang canh:</b> <span id="deleteTargetSize"></span></p>
+            <p><b>Email:</b> <span id="deleteEmail"></span></p>
+        </div>
+
+        <p class="soldout-text">
+            Sau khi xóa, sản phẩm này sẽ không còn trong danh sách canh back và server sẽ không gửi mail nữa.
+        </p>
+
+        <div class="modal-actions">
+            <button type="button" class="danger-btn" onclick="confirmDeleteWatching()">Xóa</button>
+            <button type="button" class="cancel-btn" onclick="closeDeleteModal()">Hủy</button>
+        </div>
+    </div>
+</div>
+
+<script type="module">
+import {
+    SERVER_BASE_URL,
+    safe,
+    getProductImage
+} from "./utils.js";
+
+let deleteAlertId = "";
+
+window.loadStockAlerts = loadStockAlerts;
+window.stopWatching = stopWatching;
+window.rewatch = rewatch;
+window.openDeleteModal = openDeleteModal;
+window.closeDeleteModal = closeDeleteModal;
+window.confirmDeleteWatching = confirmDeleteWatching;
+
+function showToast(message, type = "success") {
+    const toast = document.getElementById("toastMessage");
+
+    toast.innerText = message;
+    toast.classList.remove("error");
+    toast.classList.add("show");
+
+    if (type === "error") {
+        toast.classList.add("error");
+    }
+
+    setTimeout(() => {
+        toast.classList.remove("show");
+    }, 2200);
+}
+
+function getStatusText(status) {
+    if (status === "watching") {
+        return "Đang canh";
+    }
+
+    if (status === "notified_waiting_soldout") {
+        return "Đã gửi mail";
+    }
+
+    if (status === "stopped") {
+        return "Đã dừng";
+    }
+
+    if (status === "notified") {
+        return "Đã gửi mail";
+    }
+
+    return status || "Không rõ";
+}
+
+function getStatusClass(status) {
+    if (status === "watching") {
+        return "available-text";
+    }
+
+    if (status === "notified_waiting_soldout") {
+        return "soldout-text";
+    }
+
+    if (status === "stopped") {
+        return "muted-size-text";
+    }
+
+    return "page-note";
+}
+
+async function callServer(path, body) {
+    const response = await fetch(`${SERVER_BASE_URL}${path}`, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify(body)
+    });
+
+    const result = await response.json();
+
+    if (!result.success) {
+        throw new Error(result.message || "Không thực hiện được.");
+    }
+
+    return result;
+}
+
+async function stopWatching(id) {
+    try {
+        await callServer("/stock-alerts/stop", { id });
+
+        showToast("Đã dừng canh back.");
+        loadStockAlerts();
+    } catch (error) {
+        showToast(error.message, "error");
+    }
+}
+
+async function rewatch(id) {
+    try {
+        await callServer("/stock-alerts/rewatch", { id });
+
+        showToast("Đã bật canh lại.");
+        loadStockAlerts();
+    } catch (error) {
+        showToast(error.message, "error");
+    }
+}
+
+function openDeleteModal(id, productName, productCode, targetSize, email) {
+    deleteAlertId = id;
+
+    document.getElementById("deleteProductName").innerText = productName || "Không có tên";
+    document.getElementById("deleteProductCode").innerText = productCode || "";
+    document.getElementById("deleteTargetSize").innerText = targetSize || "";
+    document.getElementById("deleteEmail").innerText = email || "";
+
+    document.getElementById("deleteModal").classList.remove("hidden");
+}
+
+function closeDeleteModal() {
+    deleteAlertId = "";
+    document.getElementById("deleteModal").classList.add("hidden");
+}
+
+async function confirmDeleteWatching() {
+    if (!deleteAlertId) {
+        showToast("Không tìm thấy sản phẩm cần xóa.", "error");
+        return;
+    }
+
+    try {
+        await callServer("/stock-alerts/delete", {
+            id: deleteAlertId
+        });
+
+        closeDeleteModal();
+        showToast("Đã xóa khỏi danh sách canh back.");
+        loadStockAlerts();
+    } catch (error) {
+        showToast(error.message, "error");
+    }
+}
+
+function formatTime(value) {
+    if (!value) {
+        return "Chưa có";
+    }
+
+    const date = new Date(value);
+
+    if (isNaN(date.getTime())) {
+        return safe(value);
+    }
+
+    return date.toLocaleString("vi-VN", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric"
+    });
+}
+
+function normalizeSizeList(value) {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+
+    return value
+        .map(item => String(item || "").trim())
+        .filter(Boolean);
+}
+
+function getAlertImage(alert) {
+    return getProductImage({
+        productOnlyImage: alert.productOnlyImage,
+        dimensionImage: alert.dimensionImage,
+        imageUrl: alert.productImage || alert.imageUrl,
+        image: alert.image,
+        modelImage: alert.modelImage
+    });
+}
+
+async function loadStockAlerts() {
+    const box = document.getElementById("alertList");
+    const totalBox = document.getElementById("watchTotal");
+
+    box.innerHTML = `<div class="page-note">Đang tải danh sách canh back...</div>`;
+    totalBox.innerText = "0";
+
+    try {
+        const response = await fetch(`${SERVER_BASE_URL}/stock-alerts/list`);
+        const result = await response.json();
+
+        if (!result.success) {
+            box.innerHTML = `
+                <div class="page-note error-note">
+                    ${safe(result.message || "Không tải được danh sách.")}
+                </div>
+            `;
+            return;
+        }
+
+        const alerts = result.alerts || result.data || [];
+        const activeAlerts = alerts.filter(alert => alert.status !== "stopped");
+
+        totalBox.innerText = activeAlerts.length;
+
+        if (alerts.length === 0) {
+            box.innerHTML = `
+                <div class="page-note">
+                    Chưa có sản phẩm nào đang canh back size.
+                </div>
+            `;
+            return;
+        }
+
+        const sortedAlerts = [...alerts].sort((a, b) => {
+            const timeA = Date.parse(a.updatedAt || a.createdAt || a.lastCheckedAt || "") || 0;
+            const timeB = Date.parse(b.updatedAt || b.createdAt || b.lastCheckedAt || "") || 0;
+
+            return timeB - timeA;
+        });
+
+        box.innerHTML = sortedAlerts.map(alert => {
+            const imageUrl = getAlertImage(alert);
+
+            const statusText = getStatusText(alert.status);
+            const statusClass = getStatusClass(alert.status);
+
+            const notifyCount = Number(alert.notifyCount || 0);
+
+            const availableSizes = normalizeSizeList(alert.lastAvailableSizes);
+            const soldOutSizes = normalizeSizeList(alert.lastSoldOutSizes);
+
+            const id = safe(alert.id || "");
+            const productName = safe(alert.productName || "Không có tên");
+            const productCode = safe(alert.productCode || "");
+            const targetSize = safe(alert.targetSize || "");
+            const email = safe(alert.email || "");
+
+            const openUrl = safe(alert.productUrl || alert.url || "");
+
+            return `
+                <div class="product-card ${alert.status === "stopped" ? "out-of-stock-card" : ""}">
+                    <div class="product-image-wrap">
+                        ${
+                            imageUrl
+                                ? `<img src="${safe(imageUrl)}" alt="${productName}">`
+                                : `<div class="no-image">Không có ảnh</div>`
+                        }
+                    </div>
+
+                    <div class="product-info">
+                        <h3 class="watch-card-title">${productName}</h3>
+
+                        <div class="watch-card-meta">
+                            <span>ID: ${productCode}</span>
+                            <span>Size: ${targetSize}</span>
+                        </div>
+
+                        <p class="watch-email">
+                            Email: ${email}
+                        </p>
+
+                        <div class="watch-status-row">
+                            <span class="${statusClass}">${safe(statusText)}</span>
+                            <span>Mail: ${notifyCount} lần</span>
+                        </div>
+
+                        ${
+                            availableSizes.length
+                                ? `
+                                    <p class="watch-size-line available-text">
+                                        <b>Zara còn:</b> ${availableSizes.map(size => safe(size)).join(", ")}
+                                    </p>
+                                `
+                                : ""
+                        }
+
+                        ${
+                            soldOutSizes.length
+                                ? `
+                                    <p class="watch-size-line soldout-text">
+                                        <b>Zara hết:</b> ${soldOutSizes.map(size => safe(size)).join(", ")}
+                                    </p>
+                                `
+                                : ""
+                        }
+
+                        <p class="watch-time">
+                            Check: ${formatTime(alert.lastCheckedAt)}
+                        </p>
+
+                        <div class="watch-actions">
+                            ${
+                                openUrl
+                                    ? `
+                                        <button type="button" onclick="window.open('${openUrl}', '_blank')">
+                                            Mở Zara
+                                        </button>
+                                    `
+                                    : ""
+                            }
+
+                            ${
+                                alert.status !== "stopped"
+                                    ? `
+                                        <button type="button" class="cancel-btn" onclick="stopWatching('${id}')">
+                                            Dừng canh
+                                        </button>
+                                    `
+                                    : `
+                                        <button type="button" class="watch-btn" onclick="rewatch('${id}')">
+                                            Canh lại
+                                        </button>
+                                    `
+                            }
+
+                            <button
+                                type="button"
+                                class="danger-btn"
+                                onclick="openDeleteModal('${id}', '${productName}', '${productCode}', '${targetSize}', '${email}')"
+                            >
+                                Xóa
+                            </button>
+
+                            ${
+                                alert.status === "notified" || alert.status === "notified_waiting_soldout"
+                                    ? `
+                                        <button type="button" class="watch-btn" onclick="rewatch('${id}')">
+                                            Canh lại ngay
+                                        </button>
+                                    `
+                                    : ""
+                            }
+                        </div>
+                    </div>
+                </div>
+            `;
+        }).join("");
+    } catch (error) {
+        totalBox.innerText = "0";
+
+        box.innerHTML = `
+            <div class="page-note error-note">
+                Không gọi được server. Hãy chạy <b>node server.js</b> trước.
+            </div>
+        `;
+    }
+}
+
+loadStockAlerts();
+</script>
+
+<script src="script.js"></script>
+</body>
+</html>

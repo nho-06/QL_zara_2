@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>Import sản phẩm Zara</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="layout">
+    <aside class="sidebar" id="sidebar"></aside>
+
+    <main class="main-content">
+        <h1>Import sản phẩm Zara</h1>
+
+        <div class="import-box">
+            <h2>Dán link sản phẩm Zara</h2>
+
+            <form onsubmit="importZaraProduct(event)">
+                <textarea
+                    id="zaraUrl"
+                    placeholder="Dán link sản phẩm Zara vào đây..."
+                    required
+                ></textarea>
+
+                <div class="import-actions">
+                    <button type="submit" id="importBtn">Import sản phẩm</button>
+                    <button type="button" onclick="clearImportForm()">Xóa link</button>
+                </div>
+            </form>
+
+            <div id="importStatus" class="page-note hidden"></div>
+        </div>
+
+        <div id="previewBox" class="preview-box hidden">
+            <h2>Sản phẩm vừa import</h2>
+            <div id="previewContent"></div>
+        </div>
+    </main>
+</div>
+
+<script type="module">
+import {
+    SERVER_BASE_URL,
+    safe,
+    moneyEur,
+    moneyVnd,
+    getProductImage
+} from "./utils.js";
+
+window.importZaraProduct = importZaraProduct;
+window.clearImportForm = clearImportForm;
+
+const ACTIVE_IMPORT_JOB_KEY = "activeZaraImportJob";
+
+let currentPollTimer = null;
+let currentJobId = "";
+
+function clearPageCaches() {
+    localStorage.removeItem("homeProductsCache");
+    localStorage.removeItem("productsPageCache");
+    localStorage.removeItem("productPricesPageCache");
+    localStorage.removeItem("availablePageCache");
+    localStorage.removeItem("ordersPageCache");
+    localStorage.removeItem("historyPageCache");
+
+    localStorage.removeItem("products");
+    localStorage.removeItem("mainProducts");
+
+    sessionStorage.removeItem("homeProducts");
+    sessionStorage.removeItem("homeProductHtml");
+}
+
+function saveActiveImportJob(job) {
+    localStorage.setItem(ACTIVE_IMPORT_JOB_KEY, JSON.stringify({
+        jobId: job.jobId,
+        url: job.url,
+        startedAt: job.startedAt || new Date().toISOString()
+    }));
+}
+
+function getActiveImportJob() {
+    try {
+        const raw = localStorage.getItem(ACTIVE_IMPORT_JOB_KEY);
+
+        if (!raw) return null;
+
+        return JSON.parse(raw);
+    } catch (error) {
+        return null;
+    }
+}
+
+function clearActiveImportJob() {
+    localStorage.removeItem(ACTIVE_IMPORT_JOB_KEY);
+}
+
+function showStatus(message, type = "normal") {
+    const box = document.getElementById("importStatus");
+
+    box.classList.remove("hidden");
+    box.classList.remove("success-note", "error-note");
+    box.innerHTML = message;
+
+    if (type === "success") {
+        box.classList.add("success-note");
+    }
+
+    if (type === "error") {
+        box.classList.add("error-note");
+    }
+}
+
+function stopPolling() {
+    if (currentPollTimer) {
+        clearInterval(currentPollTimer);
+        currentPollTimer = null;
+    }
+}
+
+function setButtonImporting() {
+    const button = document.getElementById("importBtn");
+
+    button.disabled = true;
+    button.innerText = "Đang import nền...";
+}
+
+function setButtonNormal() {
+    const button = document.getElementById("importBtn");
+
+    button.disabled = false;
+    button.innerText = "Import sản phẩm";
+}
+
+function clearImportForm() {
+    stopPolling();
+
+    currentJobId = "";
+    clearActiveImportJob();
+
+    document.getElementById("zaraUrl").value = "";
+    document.getElementById("importStatus").classList.add("hidden");
+    document.getElementById("previewBox").classList.add("hidden");
+    document.getElementById("previewContent").innerHTML = "";
+
+    setButtonNormal();
+}
+
+function renderPreview(product) {
+    const previewBox = document.getElementById("previewBox");
+    const previewContent = document.getElementById("previewContent");
+
+    const availableSizes = product.availableSizes || [];
+    const soldOutSizes = product.soldOutSizes || [];
+    const allSizes = product.allSizes || [];
+
+    const imageUrl = getProductImage(product);
+
+    let sizeHtml = "";
+
+    if (allSizes.length > 0) {
+        sizeHtml = `
+            <div class="size-badges">
+                ${allSizes.map(size => {
+                    if (availableSizes.includes(size)) {
+                        return `<span class="size-badge available-size">${safe(size)}</span>`;
+                    }
+
+                    if (soldOutSizes.includes(size)) {
+                        return `<span class="size-badge soldout-size">${safe(size)}</span>`;
+                    }
+
+                    return `<span class="size-badge unknown-size">${safe(size)}</span>`;
+                }).join("")}
+            </div>
+        `;
+    } else {
+        sizeHtml = `<p class="soldout-text">Chưa lấy được size.</p>`;
+    }
+
+    let sizeChartHtml = "";
+
+    if (
+        product.sizeChart &&
+        Array.isArray(product.sizeChart.sizes) &&
+        Array.isArray(product.sizeChart.rows) &&
+        product.sizeChart.rows.length > 0
+    ) {
+        sizeChartHtml = `
+            <div class="size-chart-box">
+                <h3>Bảng size ${safe(product.sizeChart.unit || "CM")}</h3>
+
+                <div class="size-table-scroll">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>AREA</th>
+                                ${product.sizeChart.sizes.map(size => `<th>${safe(size)}</th>`).join("")}
+                            </tr>
+                        </thead>
+
+                        <tbody>
+                            ${product.sizeChart.rows.map(row => `
+                                <tr>
+                                    <td>${safe(row.area)}</td>
+                                    ${product.sizeChart.sizes.map(size => `<td>${safe(row[size] || "")}</td>`).join("")}
+                                </tr>
+                            `).join("")}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        `;
+    } else {
+        sizeChartHtml = `
+            <div class="page-note">
+                Chưa lấy được bảng size chi tiết.
+            </div>
+        `;
+    }
+
+    previewContent.innerHTML = `
+        <div class="product-card">
+            <div class="product-image-wrap">
+                ${
+                    imageUrl
+                        ? `<img src="${safe(imageUrl)}" alt="${safe(product.name)}">`
+                        : `<div class="no-image">Không có ảnh</div>`
+                }
+            </div>
+
+            <div class="product-info">
+                <h3>${safe(product.name)}</h3>
+                <p><b>ID:</b> ${safe(product.productCode)}</p>
+                <p><b>Màu:</b> ${safe(product.color || "")}</p>
+                <p><b>Giá EUR:</b> ${product.priceEur ? moneyEur(product.priceEur) : "Chưa có"}</p>
+                <p><b>Giá VNĐ:</b> ${product.finalPriceVnd ? moneyVnd(product.finalPriceVnd) : "Chưa có"}</p>
+
+                <p><b>Trạng thái:</b> ${product.isOutOfStock ? "Hết hàng" : "Còn hàng"}</p>
+
+                <p><b>Còn size:</b> ${availableSizes.length ? availableSizes.map(size => safe(size)).join(", ") : "Không còn size nào"}</p>
+                <p><b>Hết size:</b> ${soldOutSizes.length ? soldOutSizes.map(size => safe(size)).join(", ") : "Không có"}</p>
+
+                ${sizeHtml}
+            </div>
+        </div>
+
+        ${sizeChartHtml}
+    `;
+
+    previewBox.classList.remove("hidden");
+}
+
+async function checkImportJob(jobId) {
+    const activeJob = getActiveImportJob();
+
+    try {
+        const response = await fetch(`${SERVER_BASE_URL}/import-zara-job/${jobId}`);
+        const result = await response.json();
+
+        if (!result.success) {
+            stopPolling();
+
+            showStatus(`
+                <b>Không kiểm tra được job import.</b><br>
+                ${safe(result.message || "")}<br>
+                Nếu server vừa tắt/mở lại thì job cũ sẽ mất.
+            `, "error");
+
+            clearActiveImportJob();
+            setButtonNormal();
+
+            return;
+        }
+
+        const job = result.job || {};
+
+        if (job.status === "queued" || job.status === "running") {
+            setButtonImporting();
+
+            showStatus(`
+                <b>Import đang chạy nền...</b><br>
+                <b>Link đang import:</b>
+                <div style="word-break:break-all;margin-top:6px;">${safe(job.url || activeJob?.url || "")}</div>
+                <br>
+                <b>Trạng thái:</b> ${safe(job.message || "Đang xử lý...")}<br>
+                Bạn có thể bấm sang Trang chủ / Sản phẩm / Khách, server vẫn tiếp tục import.
+            `);
+
+            return;
+        }
+
+        if (job.status === "done") {
+            stopPolling();
+
+            clearPageCaches();
+            clearActiveImportJob();
+
+            showStatus(`
+                <b>Import thành công.</b><br>
+                <b>Link:</b>
+                <div style="word-break:break-all;margin-top:6px;">${safe(job.url || activeJob?.url || "")}</div>
+                <br>
+                ID: ${safe(job.product?.productCode || "")}<br>
+                Còn size: ${
+                    job.product?.availableSizes?.length
+                        ? job.product.availableSizes.map(size => safe(size)).join(", ")
+                        : "Không còn size nào"
+                }<br>
+                Hết size: ${
+                    job.product?.soldOutSizes?.length
+                        ? job.product.soldOutSizes.map(size => safe(size)).join(", ")
+                        : "Không có"
+                }
+            `, "success");
+
+            if (job.product) {
+                renderPreview(job.product);
+            }
+
+            setButtonNormal();
+
+            return;
+        }
+
+        if (job.status === "error") {
+            stopPolling();
+
+            showStatus(`
+                <b>Import lỗi.</b><br>
+                <b>Link:</b>
+                <div style="word-break:break-all;margin-top:6px;">${safe(job.url || activeJob?.url || "")}</div>
+                <br>
+                ${safe(job.message || "Import lỗi.")}
+            `, "error");
+
+            clearActiveImportJob();
+            setButtonNormal();
+        }
+    } catch (error) {
+        stopPolling();
+
+        showStatus(
+            "Không gọi được server Zara. Hãy mở terminal chạy: <b>cd zara-scraper</b> rồi <b>node server.js</b>",
+            "error"
+        );
+
+        setButtonNormal();
+    }
+}
+
+function startPollingJob(jobId) {
+    stopPolling();
+
+    currentJobId = jobId;
+
+    checkImportJob(currentJobId);
+
+    currentPollTimer = setInterval(() => {
+        checkImportJob(currentJobId);
+    }, 2500);
+}
+
+async function importZaraProduct(event) {
+    event.preventDefault();
+
+    const url = document.getElementById("zaraUrl").value.trim();
+
+    if (!url) {
+        alert("Bạn chưa dán link Zara.");
+        return;
+    }
+
+    stopPolling();
+    setButtonImporting();
+
+    showStatus(`
+        Đang gửi link lên server để import nền...<br>
+        Sau khi bắt đầu, bạn có thể chuyển sang trang khác.
+    `);
+
+    try {
+        const response = await fetch(`${SERVER_BASE_URL}/import-zara-background`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ url })
+        });
+
+        const result = await response.json();
+
+        if (!result.success) {
+            showStatus(result.message || "Không bắt đầu import được.", "error");
+            clearActiveImportJob();
+            setButtonNormal();
+
+            return;
+        }
+
+        saveActiveImportJob({
+            jobId: result.jobId,
+            url,
+            startedAt: new Date().toISOString()
+        });
+
+        showStatus(`
+            <b>Đã bắt đầu import nền.</b><br>
+            <b>Link đang import:</b>
+            <div style="word-break:break-all;margin-top:6px;">${safe(url)}</div>
+            <br>
+            Bạn có thể bấm sang Trang chủ / Sản phẩm / Khách, server vẫn import tiếp.<br>
+            Nếu quay lại trang này, trạng thái import sẽ tự hiện lại.
+        `, "success");
+
+        startPollingJob(result.jobId);
+    } catch (error) {
+        console.error(error);
+
+        showStatus(
+            "Không gọi được server Zara. Hãy mở terminal chạy: <b>cd zara-scraper</b> rồi <b>node server.js</b>",
+            "error"
+        );
+
+        clearActiveImportJob();
+        setButtonNormal();
+    }
+}
+
+function resumeActiveImportJob() {
+    const activeJob = getActiveImportJob();
+
+    if (!activeJob || !activeJob.jobId) {
+        return;
+    }
+
+    document.getElementById("zaraUrl").value = activeJob.url || "";
+
+    setButtonImporting();
+
+    showStatus(`
+        <b>Đang khôi phục import nền...</b><br>
+        <b>Link đang import:</b>
+        <div style="word-break:break-all;margin-top:6px;">${safe(activeJob.url || "")}</div>
+        <br>
+        Đang kiểm tra trạng thái trên server...
+    `);
+
+    startPollingJob(activeJob.jobId);
+}
+
+resumeActiveImportJob();
+</script>
+
+<script src="script.js"></script>
+</body>
+</html>

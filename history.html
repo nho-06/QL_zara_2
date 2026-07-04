@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>Lịch sử</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="layout">
+    <aside class="sidebar" id="sidebar"></aside>
+
+    <main class="main-content">
+        <h1>Lịch sử đã giao hàng</h1>
+
+        <div class="page-note">
+            Đây là các đơn đã mua, đã trả, đã giao hàng. Nếu bấm nhầm, chọn <b>Quay về Order</b>.
+        </div>
+
+        <button class="pink-btn top-action-btn" onclick="loadHistory(true)">
+            Làm mới từ Firebase
+        </button>
+
+        <form class="search-box" onsubmit="searchHistory(event)">
+            <input
+                type="text"
+                id="searchInput"
+                placeholder="Tìm kiếm theo tên khách, SĐT, địa chỉ, tên sản phẩm, ID, màu, size"
+            >
+
+            <button type="submit">Tìm kiếm</button>
+            <button type="button" class="cancel-btn" onclick="resetSearch()">Làm mới</button>
+        </form>
+
+        <div class="table-box">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Ảnh</th>
+                        <th>Khách</th>
+                        <th>SĐT</th>
+                        <th>Địa chỉ</th>
+                        <th>Sản phẩm</th>
+                        <th>Màu</th>
+                        <th>Size</th>
+                        <th>SL</th>
+                        <th>Tổng tiền</th>
+                        <th>Đã cọc</th>
+                        <th>Còn lại</th>
+                        <th>Loại</th>
+                        <th>Ngày tạo</th>
+                        <th>Thao tác</th>
+                    </tr>
+                </thead>
+
+                <tbody id="historyList">
+                    <tr>
+                        <td colspan="14">Đang tải dữ liệu...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </main>
+</div>
+
+<script src="script.js"></script>
+
+<script type="module">
+import {
+    safe,
+    moneyVnd,
+    getAll,
+    updateOne,
+    deleteOne,
+    now
+} from "./utils.js";
+
+let orders = [];
+let products = [];
+let currentKeyword = "";
+
+window.loadHistory = loadHistory;
+window.searchHistory = searchHistory;
+window.resetSearch = resetSearch;
+window.backToOrder = backToOrder;
+window.deleteHistory = deleteHistory;
+
+function clearPageCaches() {
+    localStorage.removeItem("historyPageCache");
+    localStorage.removeItem("ordersPageCache");
+    localStorage.removeItem("homeProductsCache");
+    localStorage.removeItem("productsPageCache");
+}
+
+function safeNumber(value) {
+    const number = Number(value || 0);
+    return isNaN(number) ? 0 : number;
+}
+
+/* Giữ nguyên vị trí cuộn */
+function keepCurrentScroll(callback) {
+    const currentScroll = window.scrollY;
+
+    callback();
+
+    requestAnimationFrame(() => {
+        window.scrollTo({
+            top: currentScroll,
+            left: 0,
+            behavior: "auto"
+        });
+    });
+}
+
+function getProductById(id) {
+    return products.find(product => String(product.id) === String(id)) || null;
+}
+
+function getProductCode(product) {
+    return product?.productCode || product?.product_code || product?.id || "";
+}
+
+function getProductName(product) {
+    return product?.name || product?.title || "";
+}
+
+function getProductImage(product) {
+    return product?.productOnlyImage || product?.imageUrl || product?.image || product?.modelImage || "";
+}
+
+async function loadHistory(forceReload = false) {
+    const historyList = document.getElementById("historyList");
+    const currentScroll = window.scrollY;
+
+    const cache = localStorage.getItem("historyPageCache");
+
+    if (!forceReload && cache) {
+        try {
+            const cacheData = JSON.parse(cache);
+
+            orders = cacheData.orders || [];
+            products = cacheData.products || [];
+
+            keepCurrentScroll(() => {
+                renderHistory();
+            });
+
+            refreshHistoryInBackground();
+            return;
+        } catch (error) {
+            localStorage.removeItem("historyPageCache");
+        }
+    }
+
+    if (!forceReload) {
+        historyList.innerHTML = `<tr><td colspan="14">Đang tải dữ liệu...</td></tr>`;
+    }
+
+    try {
+        orders = await getAll("orders");
+        products = await getAll("products");
+
+        saveHistoryCache();
+
+        keepCurrentScroll(() => {
+            renderHistory();
+        });
+
+        requestAnimationFrame(() => {
+            window.scrollTo({
+                top: currentScroll,
+                left: 0,
+                behavior: "auto"
+            });
+        });
+    } catch (error) {
+        historyList.innerHTML = `
+            <tr>
+                <td colspan="14">
+                    Không tải được Firebase. Kiểm tra mạng hoặc Firebase rules.
+                </td>
+            </tr>
+        `;
+    }
+}
+
+async function refreshHistoryInBackground() {
+    const currentScroll = window.scrollY;
+
+    try {
+        orders = await getAll("orders");
+        products = await getAll("products");
+
+        saveHistoryCache();
+
+        keepCurrentScroll(() => {
+            renderHistory();
+        });
+
+        requestAnimationFrame(() => {
+            window.scrollTo({
+                top: currentScroll,
+                left: 0,
+                behavior: "auto"
+            });
+        });
+    } catch (error) {
+        console.log("Không cập nhật được Firebase, đang dùng cache lịch sử.");
+    }
+}
+
+function saveHistoryCache() {
+    localStorage.setItem("historyPageCache", JSON.stringify({
+        orders,
+        products,
+        savedAt: Date.now()
+    }));
+}
+
+function renderHistory() {
+    const historyList = document.getElementById("historyList");
+    historyList.innerHTML = "";
+
+    let list = orders.filter(order => {
+        return order.orderStatus === "delivered" ||
+               order.order_status === "delivered";
+    });
+
+    if (currentKeyword.trim() !== "") {
+        const keyword = currentKeyword.toLowerCase();
+
+        list = list.filter(order => {
+            const product = getProductById(order.productId);
+
+            const text = `
+                ${order.customerName || order.customer_name || ""}
+                ${order.phone || ""}
+                ${order.address || ""}
+                ${order.color || ""}
+                ${order.size || ""}
+                ${order.productCode || ""}
+                ${order.productName || ""}
+                ${getProductCode(product)}
+                ${getProductName(product)}
+            `.toLowerCase();
+
+            return text.includes(keyword);
+        });
+    }
+
+    list.sort((a, b) => {
+        return String(b.deliveredAt || b.updatedAt || b.createdAt || "").localeCompare(
+            String(a.deliveredAt || a.updatedAt || a.createdAt || "")
+        );
+    });
+
+    if (list.length === 0) {
+        historyList.innerHTML = `<tr><td colspan="14">Không tìm thấy lịch sử giao hàng</td></tr>`;
+        return;
+    }
+
+    list.forEach(order => {
+        const product = getProductById(order.productId);
+
+        const image = order.imageUrl || getProductImage(product);
+        const productCode = order.productCode || getProductCode(product);
+        const productName = order.productName || getProductName(product);
+
+        const quantity = safeNumber(order.quantity || 1);
+        const depositMoney = safeNumber(order.depositMoney || order.deposit_money || 0);
+        const totalMoney = safeNumber(order.totalMoney || order.total_money || 0);
+        const remainingMoney = safeNumber(order.remainingMoney || order.remaining_money || 0);
+
+        historyList.innerHTML += `
+            <tr>
+                <td>
+                    ${image ? `<img src="${safe(image)}" alt="Ảnh">` : "Chưa có ảnh"}
+                </td>
+
+                <td>${safe(order.customerName || order.customer_name || "")}</td>
+                <td>${safe(order.phone || "Chưa nhập")}</td>
+                <td>${safe(order.address || "Chưa nhập")}</td>
+
+                <td>
+                    ${safe(productCode)}<br>
+                    ${safe(productName)}
+                </td>
+
+                <td>${safe(order.color || "")}</td>
+                <td>${safe(order.size || "")}</td>
+                <td>${safe(quantity)}</td>
+
+                <td>${moneyVnd(totalMoney)}</td>
+                <td>${moneyVnd(depositMoney)}</td>
+                <td>${moneyVnd(remainingMoney)}</td>
+
+                <td>${safe(order.orderType || order.order_type || "Khách order")}</td>
+                <td>${safe(order.createdAt || order.created_at || "")}</td>
+
+                <td>
+                    <button type="button" class="edit-link" onclick="backToOrder('${safe(order.id)}')">
+                        Quay về Order
+                    </button>
+
+                    <button type="button" class="delete-link" onclick="deleteHistory('${safe(order.id)}')">
+                        Xóa
+                    </button>
+                </td>
+            </tr>
+        `;
+    });
+}
+
+async function backToOrder(id) {
+    const ok = confirm("Đưa đơn này quay về Order?");
+
+    if (!ok) return;
+
+    const currentScroll = window.scrollY;
+
+    try {
+        await updateOne("orders", id, {
+            orderStatus: "ordering",
+            updatedAt: now()
+        });
+
+        clearPageCaches();
+
+        await loadHistory(true);
+
+        requestAnimationFrame(() => {
+            window.scrollTo({
+                top: currentScroll,
+                left: 0,
+                behavior: "auto"
+            });
+        });
+
+        alert("Đã đưa đơn quay về Order.");
+    } catch (error) {
+        alert("Không cập nhật được đơn. Kiểm tra Firebase rules.");
+    }
+}
+
+async function deleteHistory(id) {
+    const ok = confirm("Xóa vĩnh viễn lịch sử này?");
+
+    if (!ok) return;
+
+    const currentScroll = window.scrollY;
+
+    try {
+        await deleteOne("orders", id);
+
+        clearPageCaches();
+
+        await loadHistory(true);
+
+        requestAnimationFrame(() => {
+            window.scrollTo({
+                top: currentScroll,
+                left: 0,
+                behavior: "auto"
+            });
+        });
+
+        alert("Đã xóa lịch sử.");
+    } catch (error) {
+        alert("Không xóa được lịch sử. Kiểm tra Firebase rules.");
+    }
+}
+
+function searchHistory(event) {
+    event.preventDefault();
+
+    const currentScroll = window.scrollY;
+
+    currentKeyword = document.getElementById("searchInput").value.trim();
+
+    keepCurrentScroll(() => {
+        renderHistory();
+    });
+
+    requestAnimationFrame(() => {
+        window.scrollTo({
+            top: currentScroll,
+            left: 0,
+            behavior: "auto"
+        });
+    });
+}
+
+function resetSearch() {
+    const currentScroll = window.scrollY;
+
+    currentKeyword = "";
+    document.getElementById("searchInput").value = "";
+
+    keepCurrentScroll(() => {
+        renderHistory();
+    });
+
+    requestAnimationFrame(() => {
+        window.scrollTo({
+            top: currentScroll,
+            left: 0,
+            behavior: "auto"
+        });
+    });
+}
+
+loadHistory(false);
+</script>
+
+</body>
+</html>

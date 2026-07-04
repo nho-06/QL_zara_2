@@ -1,0 +1,780 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>Giá sản phẩm</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="layout">
+    <aside class="sidebar" id="sidebar"></aside>
+
+    <main class="main-content">
+        <h1>Giá sản phẩm</h1>
+
+        <div class="page-note" id="priceNote">
+            Đang tải tỉ giá và giá công...
+        </div>
+
+        <div class="form-box">
+            <h2>Cài đặt giá công</h2>
+
+            <input
+                type="number"
+                id="laborFee"
+                placeholder="Giá công, ví dụ: 30000"
+            >
+
+            <div class="form-action-row">
+                <button type="button" onclick="saveLaborFee()">
+                    Lưu giá công
+                </button>
+            </div>
+        </div>
+
+        <div class="form-box">
+            <h2 id="formTitle">Thêm nấc giá</h2>
+
+            <input type="hidden" id="editPriceId">
+
+            <select id="productId" required>
+                <option value="">-- Chọn sản phẩm --</option>
+            </select>
+
+            <select id="countryId" required>
+                <option value="">-- Chọn nước --</option>
+            </select>
+
+            <input
+                type="text"
+                id="priceLabel"
+                placeholder="Nấc giá, ví dụ: Giá gốc, Sale 1, Sale 2"
+                required
+            >
+
+            <input
+                type="text"
+                id="priceEur"
+                placeholder="Giá web EUR, ví dụ: 29,97"
+                required
+            >
+
+            <div class="form-action-row">
+                <button type="button" id="savePriceBtn" onclick="savePrice()">
+                    Thêm giá
+                </button>
+
+                <button type="button" class="cancel-btn" onclick="resetForm()">
+                    Hủy
+                </button>
+            </div>
+        </div>
+
+        <form class="search-box" onsubmit="searchPrices(event)">
+            <input
+                type="text"
+                id="searchInput"
+                placeholder="Tìm theo ID, tên sản phẩm, nước, nấc giá"
+            >
+
+            <button type="submit">Tìm kiếm</button>
+            <button type="button" class="cancel-btn" onclick="resetSearch()">Làm mới</button>
+        </form>
+
+        <button class="pink-btn top-action-btn" onclick="loadData(true)">
+            Làm mới từ Firebase
+        </button>
+
+        <h2>Danh sách giá</h2>
+
+        <div class="table-box">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Sản phẩm</th>
+                        <th>Nước</th>
+                        <th>Nấc giá</th>
+                        <th>Giá web EUR</th>
+                        <th>Tỉ giá</th>
+                        <th>Quy đổi VND</th>
+                        <th>Giá công</th>
+                        <th>Giá bán</th>
+                        <th>Đang dùng</th>
+                        <th>Ngày tạo</th>
+                        <th>Thao tác</th>
+                    </tr>
+                </thead>
+
+                <tbody id="priceList">
+                    <tr>
+                        <td colspan="11">Đang tải dữ liệu...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </main>
+</div>
+
+<script src="script.js"></script>
+
+<script type="module">
+import {
+    safe,
+    moneyVnd,
+    moneyEur,
+    getAll,
+    setOne,
+    updateOne,
+    deleteOne,
+    makeKey,
+    sortProductsNewestFirst,
+    now
+} from "./utils.js";
+
+let products = [];
+let countries = [];
+let productPrices = [];
+let exchangeRates = [];
+let settings = [];
+
+let defaultRate = 31500;
+let laborFeeVnd = 30000;
+let currentKeyword = "";
+
+window.savePrice = savePrice;
+window.editPrice = editPrice;
+window.deletePrice = deletePrice;
+window.setActivePrice = setActivePrice;
+window.resetForm = resetForm;
+window.searchPrices = searchPrices;
+window.resetSearch = resetSearch;
+window.loadData = loadData;
+window.saveLaborFee = saveLaborFee;
+
+function clearPageCaches() {
+    localStorage.removeItem("homeProductsCache");
+    localStorage.removeItem("productsPageCache");
+    localStorage.removeItem("productPricesPageCache");
+    localStorage.removeItem("availablePageCache");
+    localStorage.removeItem("ordersPageCache");
+    localStorage.removeItem("historyPageCache");
+
+    sessionStorage.removeItem("homeProducts");
+    sessionStorage.removeItem("homeProductHtml");
+}
+
+function safeNumber(value) {
+    if (value === null || value === undefined || value === "") {
+        return 0;
+    }
+
+    if (typeof value === "number") {
+        return isNaN(value) ? 0 : value;
+    }
+
+    let text = String(value).trim();
+
+    text = text
+        .replace(/\s/g, "")
+        .replace("€", "")
+        .replace("đ", "");
+
+    if (text.includes(",") && text.includes(".")) {
+        text = text.replace(/\./g, "").replace(",", ".");
+    } else if (text.includes(",")) {
+        text = text.replace(",", ".");
+    }
+
+    const number = Number(text);
+
+    return isNaN(number) ? 0 : number;
+}
+
+function formatDate(value) {
+    if (!value) return "";
+
+    const date = new Date(value);
+
+    if (isNaN(date.getTime())) {
+        return safe(value);
+    }
+
+    return date.toLocaleString("vi-VN");
+}
+
+function getProductById(id) {
+    return products.find(product => {
+        return (
+            String(product.id || "") === String(id) ||
+            String(product.productCode || "") === String(id)
+        );
+    }) || null;
+}
+
+function getCountryById(id) {
+    return countries.find(country => String(country.id) === String(id)) || null;
+}
+
+function getProductCode(product) {
+    return product?.productCode || product?.product_code || product?.id || "";
+}
+
+function getProductName(product) {
+    return product?.name || product?.title || "";
+}
+
+function getCountryName(country) {
+    return country?.countryName || country?.country_name || country?.name || "Spain";
+}
+
+function getCurrencyCode(country) {
+    return country?.currencyCode || country?.currency_code || country?.code || "EUR";
+}
+function getDefaultRateFromFirebase() {
+    const defaultItem = exchangeRates.find(rate => {
+        return (
+            rate.isDefault === true ||
+            rate.is_default === true ||
+            rate.is_default === 1
+        );
+    });
+
+    if (defaultItem) {
+        const value = safeNumber(
+            defaultItem.eurToVnd ||
+            defaultItem.eur_to_vnd ||
+            defaultItem.rate
+        );
+
+        return value > 0 ? value : 31500;
+    }
+
+    if (exchangeRates.length > 0) {
+        const value = safeNumber(
+            exchangeRates[0].eurToVnd ||
+            exchangeRates[0].eur_to_vnd ||
+            exchangeRates[0].rate
+        );
+
+        return value > 0 ? value : 31500;
+    }
+
+    return 31500;
+}
+
+function getLaborFeeFromFirebase() {
+    const setting = settings.find(item => {
+        return item.id === "price_config" || item.key === "price_config";
+    });
+
+    if (setting) {
+        const value = safeNumber(setting.laborFeeVnd || setting.labor_fee_vnd);
+        return value > 0 ? value : 30000;
+    }
+
+    return 30000;
+}
+
+function getConvertedVnd(priceEur) {
+    return Math.round(safeNumber(priceEur) * defaultRate);
+}
+
+function getFinalPrice(priceEur) {
+    return getConvertedVnd(priceEur) + laborFeeVnd;
+}
+
+async function loadData(forceReload = false) {
+    const priceList = document.getElementById("priceList");
+
+    const cache = localStorage.getItem("productPricesPageCache");
+
+    if (!forceReload && cache) {
+        try {
+            const cacheData = JSON.parse(cache);
+
+            products = sortProductsNewestFirst(cacheData.products || []);
+            countries = cacheData.countries || [];
+            productPrices = cacheData.productPrices || [];
+            exchangeRates = cacheData.exchangeRates || [];
+            settings = cacheData.settings || [];
+
+            defaultRate = cacheData.defaultRate || 31500;
+            laborFeeVnd = cacheData.laborFeeVnd || 30000;
+
+            renderNote();
+            renderSelects();
+            renderPrices();
+
+            refreshDataInBackground();
+            return;
+        } catch (error) {
+            localStorage.removeItem("productPricesPageCache");
+        }
+    }
+
+    priceList.innerHTML = `<tr><td colspan="11">Đang tải dữ liệu...</td></tr>`;
+
+    try {
+        products = sortProductsNewestFirst(await getAll("products"));
+        countries = await getAll("countries");
+        productPrices = await getAll("product_prices");
+        exchangeRates = await getAll("exchange_rates");
+        settings = await getAll("settings");
+
+        if (exchangeRates.length === 0) {
+            await setOne("exchange_rates", "default", {
+                rateName: "Tỉ giá mặc định",
+                eurToVnd: 31500,
+                rate: 31500,
+                isDefault: true,
+                createdAt: now(),
+                updatedAt: now()
+            });
+
+            exchangeRates = await getAll("exchange_rates");
+        }
+
+        if (countries.length === 0) {
+            await setOne("countries", "spain", {
+                countryName: "Spain",
+                name: "Spain",
+                currencyCode: "EUR",
+                code: "EUR",
+                note: "Zara Tây Ban Nha",
+                createdAt: now(),
+                updatedAt: now()
+            });
+
+            countries = await getAll("countries");
+        }
+
+        defaultRate = getDefaultRateFromFirebase();
+        laborFeeVnd = getLaborFeeFromFirebase();
+
+        savePageCache();
+        renderNote();
+        renderSelects();
+        renderPrices();
+    } catch (error) {
+        priceList.innerHTML = `
+            <tr>
+                <td colspan="11">
+                    Không tải được dữ liệu Firebase. Kiểm tra kết nối hoặc Firebase rules.
+                </td>
+            </tr>
+        `;
+    }
+}
+
+async function refreshDataInBackground() {
+    try {
+        products = sortProductsNewestFirst(await getAll("products"));
+        countries = await getAll("countries");
+        productPrices = await getAll("product_prices");
+        exchangeRates = await getAll("exchange_rates");
+        settings = await getAll("settings");
+
+        defaultRate = getDefaultRateFromFirebase();
+        laborFeeVnd = getLaborFeeFromFirebase();
+
+        savePageCache();
+        renderNote();
+        renderSelects();
+        renderPrices();
+    } catch (error) {
+        console.log("Không cập nhật được Firebase, đang dùng cache giá sản phẩm.");
+    }
+}
+
+function savePageCache() {
+    localStorage.setItem("productPricesPageCache", JSON.stringify({
+        products,
+        countries,
+        productPrices,
+        exchangeRates,
+        settings,
+        defaultRate,
+        laborFeeVnd,
+        savedAt: Date.now()
+    }));
+}
+
+function renderNote() {
+    document.getElementById("laborFee").value = laborFeeVnd;
+
+    document.getElementById("priceNote").innerHTML = `
+        Công thức đang dùng:
+        <b>Giá bán = Giá web EUR × ${moneyVnd(defaultRate).replace(" đ", "")} + ${moneyVnd(laborFeeVnd)} tiền công</b>.
+        Khi sửa giá công, tất cả giá bán bên dưới sẽ tự cập nhật.
+    `;
+}
+
+function renderSelects() {
+    const productSelect = document.getElementById("productId");
+    const countrySelect = document.getElementById("countryId");
+
+    const oldProductValue = productSelect.value;
+    const oldCountryValue = countrySelect.value;
+
+    productSelect.innerHTML = `<option value="">-- Chọn sản phẩm --</option>`;
+    countrySelect.innerHTML = `<option value="">-- Chọn nước --</option>`;
+
+    const sortedProducts = sortProductsNewestFirst(products);
+
+    sortedProducts.forEach(product => {
+        const code = getProductCode(product);
+        const name = getProductName(product);
+
+        productSelect.innerHTML += `
+            <option value="${safe(product.id)}">
+                ${safe(code)} - ${safe(name)}
+            </option>
+        `;
+    });
+
+    countries.forEach(country => {
+        countrySelect.innerHTML += `
+            <option value="${safe(country.id)}">
+                ${safe(getCountryName(country))} - ${safe(getCurrencyCode(country))}
+            </option>
+        `;
+    });
+
+    if (oldProductValue) productSelect.value = oldProductValue;
+    if (oldCountryValue) countrySelect.value = oldCountryValue;
+}
+
+function renderPrices() {
+    const priceList = document.getElementById("priceList");
+    priceList.innerHTML = "";
+
+    let filteredPrices = [...productPrices];
+
+    if (currentKeyword.trim() !== "") {
+        const keyword = currentKeyword.toLowerCase();
+
+        filteredPrices = filteredPrices.filter(price => {
+            const product = getProductById(price.productId || price.productCode);
+            const country = getCountryById(price.countryId);
+
+            const text = `
+                ${getProductCode(product)}
+                ${getProductName(product)}
+                ${getCountryName(country)}
+                ${price.priceLabel || price.price_label || ""}
+            `.toLowerCase();
+
+            return text.includes(keyword);
+        });
+    }
+
+    filteredPrices.sort((a, b) => {
+        if (a.isActive === true && b.isActive !== true) return -1;
+        if (a.isActive !== true && b.isActive === true) return 1;
+
+        const timeA = Date.parse(a.updatedAt || a.createdAt || "") || 0;
+        const timeB = Date.parse(b.updatedAt || b.createdAt || "") || 0;
+
+        return timeB - timeA;
+    });
+
+    if (filteredPrices.length === 0) {
+        priceList.innerHTML = `<tr><td colspan="11">Chưa có giá sản phẩm nào</td></tr>`;
+        return;
+    }
+
+    filteredPrices.forEach(price => {
+        const product = getProductById(price.productId || price.productCode);
+        const country = getCountryById(price.countryId);
+
+        const priceEur = safeNumber(price.priceEur || price.price_eur || price.salePriceEur);
+        const converted = getConvertedVnd(priceEur);
+        const finalPrice = safeNumber(price.priceVnd || price.finalPriceVnd) || getFinalPrice(priceEur);
+
+        priceList.innerHTML += `
+            <tr>
+                <td>
+                    ${safe(getProductCode(product))}<br>
+                    ${safe(getProductName(product))}
+                </td>
+
+                <td>${safe(getCountryName(country))}</td>
+
+                <td>${safe(price.priceLabel || price.price_label || "")}</td>
+
+                <td>${moneyEur(priceEur)}</td>
+
+                <td>${moneyVnd(defaultRate)}</td>
+
+                <td>${moneyVnd(converted)}</td>
+
+                <td>${moneyVnd(laborFeeVnd)}</td>
+
+                <td><b>${moneyVnd(finalPrice)}</b></td>
+
+                <td>
+                    ${
+                        price.isActive === true
+                            ? `<span class="status-default">Đang dùng</span>`
+                            : `<button type="button" class="success-link" onclick="setActivePrice('${safe(price.id)}')">
+                                Chọn dùng
+                               </button>`
+                    }
+                </td>
+
+                <td>${formatDate(price.createdAt || price.created_at || "")}</td>
+
+                <td>
+                    <button type="button" class="edit-link" onclick="editPrice('${safe(price.id)}')">Sửa</button>
+                    <button type="button" class="delete-link" onclick="deletePrice('${safe(price.id)}')">Xóa</button>
+                </td>
+            </tr>
+        `;
+    });
+}
+async function saveLaborFee() {
+    const value = safeNumber(document.getElementById("laborFee").value);
+
+    if (value < 0) {
+        alert("Giá công không hợp lệ.");
+        return;
+    }
+
+    try {
+        await setOne("settings", "price_config", {
+            key: "price_config",
+            laborFeeVnd: value,
+            labor_fee_vnd: value,
+            updatedAt: now()
+        });
+
+        laborFeeVnd = value;
+
+        const existingSettingIndex = settings.findIndex(item => {
+            return item.id === "price_config" || item.key === "price_config";
+        });
+
+        if (existingSettingIndex >= 0) {
+            settings[existingSettingIndex] = {
+                ...settings[existingSettingIndex],
+                laborFeeVnd: value,
+                labor_fee_vnd: value,
+                updatedAt: now()
+            };
+        } else {
+            settings.push({
+                id: "price_config",
+                key: "price_config",
+                laborFeeVnd: value,
+                labor_fee_vnd: value,
+                updatedAt: now()
+            });
+        }
+
+        clearPageCaches();
+        savePageCache();
+        renderNote();
+        renderPrices();
+
+        alert("Đã cập nhật giá công.");
+    } catch (error) {
+        alert("Không lưu được giá công. Kiểm tra Firebase rules.");
+    }
+}
+
+async function savePrice() {
+    const editPriceId = document.getElementById("editPriceId").value.trim();
+    const productId = document.getElementById("productId").value.trim();
+    const countryId = document.getElementById("countryId").value.trim();
+    const priceLabel = document.getElementById("priceLabel").value.trim();
+    const priceEur = safeNumber(document.getElementById("priceEur").value);
+
+    if (!productId || !countryId || !priceLabel || priceEur <= 0) {
+        alert("Vui lòng nhập đầy đủ sản phẩm, nước, nấc giá và giá web EUR.");
+        return;
+    }
+
+    const product = getProductById(productId);
+    const converted = getConvertedVnd(priceEur);
+    const finalPrice = getFinalPrice(priceEur);
+    const currentTime = now();
+
+    const data = {
+        productId,
+        productCode: getProductCode(product),
+
+        countryId,
+
+        priceLabel,
+        price_label: priceLabel,
+
+        priceEur,
+        price_eur: priceEur,
+
+        rateVnd: defaultRate,
+        rate: defaultRate,
+
+        laborFeeVnd,
+        labor_fee_vnd: laborFeeVnd,
+
+        convertedVnd: converted,
+        converted_vnd: converted,
+
+        finalPriceVnd: finalPrice,
+        priceVnd: finalPrice,
+
+        updatedAt: currentTime
+    };
+
+    try {
+        if (editPriceId) {
+            await updateOne("product_prices", editPriceId, data);
+
+            const index = productPrices.findIndex(item => String(item.id) === String(editPriceId));
+
+            if (index >= 0) {
+                productPrices[index] = {
+                    ...productPrices[index],
+                    ...data
+                };
+            }
+        } else {
+            const id = makeKey(`${productId}_${countryId}_${priceLabel}_${Date.now()}`);
+
+            await setOne("product_prices", id, {
+                ...data,
+                isActive: false,
+                createdAt: currentTime
+            });
+
+            productPrices.push({
+                id,
+                ...data,
+                isActive: false,
+                createdAt: currentTime
+            });
+        }
+
+        clearPageCaches();
+        savePageCache();
+
+        renderSelects();
+        renderPrices();
+        resetForm();
+
+        alert(editPriceId ? "Đã cập nhật giá." : "Đã thêm giá.");
+    } catch (error) {
+        alert("Không lưu được giá. Kiểm tra Firebase rules.");
+    }
+}
+
+function editPrice(id) {
+    const price = productPrices.find(item => String(item.id) === String(id));
+
+    if (!price) {
+        alert("Không tìm thấy giá cần sửa.");
+        return;
+    }
+
+    document.getElementById("formTitle").innerText = "Sửa giá";
+    document.getElementById("savePriceBtn").innerText = "Cập nhật giá";
+
+    document.getElementById("editPriceId").value = price.id;
+    document.getElementById("productId").value = price.productId || "";
+    document.getElementById("countryId").value = price.countryId || "";
+    document.getElementById("priceLabel").value = price.priceLabel || price.price_label || "";
+    document.getElementById("priceEur").value = price.priceEur || price.price_eur || price.salePriceEur || "";
+}
+
+async function deletePrice(id) {
+    const ok = confirm("Xóa nấc giá này?");
+
+    if (!ok) return;
+
+    try {
+        await deleteOne("product_prices", id);
+
+        productPrices = productPrices.filter(item => String(item.id) !== String(id));
+
+        clearPageCaches();
+        savePageCache();
+        renderPrices();
+
+        alert("Đã xóa giá.");
+    } catch (error) {
+        alert("Không xóa được giá. Kiểm tra Firebase rules.");
+    }
+}
+
+async function setActivePrice(id) {
+    const price = productPrices.find(item => String(item.id) === String(id));
+
+    if (!price) {
+        alert("Không tìm thấy giá.");
+        return;
+    }
+
+    const ok = confirm("Chọn nấc giá này để dùng?");
+
+    if (!ok) return;
+
+    try {
+        for (const item of productPrices) {
+            if (String(item.productId) === String(price.productId)) {
+                await updateOne("product_prices", item.id, {
+                    isActive: false,
+                    updatedAt: now()
+                });
+
+                item.isActive = false;
+            }
+        }
+
+        await updateOne("product_prices", id, {
+            isActive: true,
+            updatedAt: now()
+        });
+
+        price.isActive = true;
+        price.updatedAt = now();
+
+        clearPageCaches();
+        savePageCache();
+        renderPrices();
+
+        alert("Đã chọn giá đang dùng.");
+    } catch (error) {
+        alert("Không chọn được giá. Kiểm tra Firebase rules.");
+    }
+}
+
+function resetForm() {
+    document.getElementById("formTitle").innerText = "Thêm nấc giá";
+    document.getElementById("savePriceBtn").innerText = "Thêm giá";
+
+    document.getElementById("editPriceId").value = "";
+    document.getElementById("productId").value = "";
+    document.getElementById("countryId").value = "";
+    document.getElementById("priceLabel").value = "";
+    document.getElementById("priceEur").value = "";
+}
+
+function searchPrices(event) {
+    event.preventDefault();
+
+    currentKeyword = document.getElementById("searchInput").value.trim();
+    renderPrices();
+}
+
+function resetSearch() {
+    currentKeyword = "";
+    document.getElementById("searchInput").value = "";
+    renderPrices();
+}
+
+loadData(false);
+</script>
+
+</body>
+</html>
