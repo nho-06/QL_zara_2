@@ -95,6 +95,17 @@
             line-height: 1.35;
         }
 
+        .watch-country-line {
+            margin: 8px 0;
+            color: #333;
+            font-size: 14px;
+            line-height: 1.4;
+        }
+
+        .watch-country-line b {
+            color: #9b4a60;
+        }
+
         .watch-status-row {
             display: flex;
             flex-wrap: wrap;
@@ -163,6 +174,14 @@
             <button type="button" class="pink-btn" onclick="window.location.href='index.html'">Về trang chủ</button>
         </div>
 
+        <div class="page-note">
+            Danh sách này hiển thị các sản phẩm đang canh size.
+            Khi size back lại, hệ thống gửi mail.
+            Nếu size hết lại, hệ thống tự bật canh lại cho vòng sau.
+            Khi khách mua được rồi thì bấm <b>Dừng canh</b>.
+            Nếu không muốn lưu món đó nữa thì bấm <b>Xóa</b>.
+        </div>
+
         <div id="watchSummary" class="watch-summary">
             Tổng sản phẩm cần canh: <b id="watchTotal">0</b>
         </div>
@@ -203,6 +222,15 @@ import {
 } from "./utils.js";
 
 let deleteAlertId = "";
+
+const WATCH_COUNTRY_LABELS = {
+    ALL: "Tất cả",
+    ES: "Tây Ban Nha",
+    DE: "Đức",
+    PL: "Ba Lan",
+    PT: "Bồ Đào Nha",
+    JP: "Nhật"
+};
 
 window.loadStockAlerts = loadStockAlerts;
 window.stopWatching = stopWatching;
@@ -261,6 +289,42 @@ function getStatusClass(status) {
     }
 
     return "page-note";
+}
+
+function normalizeCountryCode(value) {
+    return String(value || "")
+        .trim()
+        .toUpperCase();
+}
+
+function normalizeTargetCountries(value) {
+    if (!Array.isArray(value) || value.length === 0) {
+        return ["ALL"];
+    }
+
+    const countries = value
+        .map(item => normalizeCountryCode(item))
+        .filter(Boolean);
+
+    if (countries.length === 0 || countries.includes("ALL")) {
+        return ["ALL"];
+    }
+
+    return [...new Set(countries)];
+}
+
+function getCountryNamesFromAlert(alert) {
+    if (Array.isArray(alert.targetCountryNames) && alert.targetCountryNames.length > 0) {
+        return alert.targetCountryNames.map(item => String(item || "").trim()).filter(Boolean);
+    }
+
+    const codes = normalizeTargetCountries(alert.targetCountries);
+
+    if (codes.includes("ALL")) {
+        return ["Tất cả"];
+    }
+
+    return codes.map(code => WATCH_COUNTRY_LABELS[code] || code);
 }
 
 async function callServer(path, body) {
@@ -437,6 +501,9 @@ async function loadStockAlerts() {
             const targetSize = safe(alert.targetSize || "");
             const email = safe(alert.email || "");
 
+            const countryNames = getCountryNamesFromAlert(alert);
+            const countryText = countryNames.length ? countryNames.join(", ") : "Tất cả";
+
             const openUrl = safe(alert.productUrl || alert.url || "");
 
             return `
@@ -459,6 +526,10 @@ async function loadStockAlerts() {
 
                         <p class="watch-email">
                             Email: ${email}
+                        </p>
+
+                        <p class="watch-country-line">
+                            <b>Nước canh:</b> ${safe(countryText)}
                         </p>
 
                         <div class="watch-status-row">

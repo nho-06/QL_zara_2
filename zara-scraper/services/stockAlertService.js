@@ -22,6 +22,15 @@ const {
 
 const MAX_PARALLEL_COUNTRY_CHECK = 5;
 
+const WATCH_COUNTRY_LABELS = {
+    ALL: "Tất cả",
+    ES: "Tây Ban Nha",
+    DE: "Đức",
+    PL: "Ba Lan",
+    PT: "Bồ Đào Nha",
+    JP: "Nhật"
+};
+
 function nowIso() {
     return new Date().toISOString();
 }
@@ -36,6 +45,38 @@ function cleanText(value) {
 
 function cleanEmail(value) {
     return cleanText(value).toLowerCase();
+}
+
+function normalizeCountryCode(value) {
+    return String(value || "")
+        .trim()
+        .toUpperCase();
+}
+
+function normalizeTargetCountries(value) {
+    if (!Array.isArray(value) || value.length === 0) {
+        return ["ALL"];
+    }
+
+    const countries = value
+        .map(item => normalizeCountryCode(item))
+        .filter(Boolean);
+
+    if (countries.length === 0 || countries.includes("ALL")) {
+        return ["ALL"];
+    }
+
+    return [...new Set(countries)];
+}
+
+function getCountryNamesFromCodes(codes) {
+    const list = normalizeTargetCountries(codes);
+
+    if (list.includes("ALL")) {
+        return ["Tất cả"];
+    }
+
+    return list.map(code => WATCH_COUNTRY_LABELS[code] || code);
 }
 
 function isActiveWatchingStatus(status) {
@@ -78,10 +119,15 @@ function getAlertKey(payload) {
     const productUrl = cleanText(payload.productUrl || payload.url || "");
     const targetSize = normalizeSize(payload.targetSize || payload.size || "");
 
+    const targetCountries = normalizeTargetCountries(payload.targetCountries)
+        .join("-")
+        .toLowerCase();
+
     const base = [
         email,
         productCode || productUrl,
-        targetSize
+        targetSize,
+        targetCountries
     ]
         .filter(Boolean)
         .join("_");
@@ -93,6 +139,7 @@ function normalizeAlertPayload(payload = {}) {
     const email = cleanEmail(payload.email);
     const productUrl = normalizeProductUrl(payload.productUrl || payload.url);
     const targetSize = normalizeSize(payload.targetSize || payload.size);
+    const targetCountries = normalizeTargetCountries(payload.targetCountries);
 
     const productName = cleanText(
         payload.productName ||
@@ -122,6 +169,8 @@ function normalizeAlertPayload(payload = {}) {
         email,
         productUrl,
         targetSize,
+        targetCountries,
+        targetCountryNames: getCountryNamesFromCodes(targetCountries),
         productName,
         productCode,
         productImage
@@ -166,12 +215,21 @@ async function findProductInFirebase(alert) {
 async function fillAlertProductData(alert) {
     const product = await findProductInFirebase(alert);
 
+    const targetCountries = normalizeTargetCountries(alert.targetCountries);
+
     if (!product) {
-        return alert;
+        return {
+            ...alert,
+            targetCountries,
+            targetCountryNames: getCountryNamesFromCodes(targetCountries)
+        };
     }
 
     return {
         ...alert,
+
+        targetCountries,
+        targetCountryNames: getCountryNamesFromCodes(targetCountries),
 
         productName:
             alert.productName ||
@@ -229,6 +287,9 @@ async function saveWatchAlert(payload = {}) {
         productUrl: cleanPayload.productUrl,
         targetSize: cleanPayload.targetSize,
 
+        targetCountries: cleanPayload.targetCountries,
+        targetCountryNames: cleanPayload.targetCountryNames,
+
         productName: cleanPayload.productName,
         productCode: cleanPayload.productCode,
         productImage: cleanPayload.productImage,
@@ -271,7 +332,9 @@ async function listStockAlerts() {
 
     return Object.entries(data).map(([id, alert]) => ({
         id,
-        ...alert
+        ...alert,
+        targetCountries: normalizeTargetCountries(alert.targetCountries),
+        targetCountryNames: getCountryNamesFromCodes(alert.targetCountries)
     }));
 }
 
@@ -351,11 +414,24 @@ function chunkArray(items, size) {
     return result;
 }
 
+function filterCountryUrlsByAlert(countryUrls, alert) {
+    const targetCountries = normalizeTargetCountries(alert.targetCountries);
+
+    if (targetCountries.includes("ALL")) {
+        return countryUrls;
+    }
+
+    return countryUrls.filter(item => {
+        const code = normalizeCountryCode(item.countryCode);
+        return targetCountries.includes(code);
+    });
+}
+
 async function checkCountryBatch(browser, alert, countryItems) {
     const tasks = countryItems.map(async countryItem => {
         try {
             console.log(
-                `Đang check ${countryItem.countryCode.toUpperCase()} - ${alert.productName || alert.productCode || alert.productUrl}`
+                `Đang check ${String(countryItem.countryCode).toUpperCase()} - ${alert.productName || alert.productCode || alert.productUrl}`
             );
 
             const stock = await checkOneZaraStock(
@@ -367,7 +443,7 @@ async function checkCountryBatch(browser, alert, countryItems) {
 
             return {
                 ...stock,
-                countryCode: countryItem.countryCode,
+                countryCode: normalizeCountryCode(countryItem.countryCode),
                 countryName: countryItem.countryName,
                 currency: countryItem.currency,
                 rate: stock.rate || countryItem.rate,
@@ -383,7 +459,7 @@ async function checkCountryBatch(browser, alert, countryItems) {
                 availableSizes: [],
                 soldOutSizes: [],
                 sizeOptions: [],
-                countryCode: countryItem.countryCode,
+                countryCode: normalizeCountryCode(countryItem.countryCode),
                 countryName: countryItem.countryName,
                 currency: countryItem.currency,
                 rate: countryItem.rate,
@@ -400,7 +476,26 @@ async function checkCountryBatch(browser, alert, countryItems) {
 }
 
 async function checkMultiCountryStock(browser, alert) {
-    const countryUrls = buildCountryUrls(alert.productUrl);
+    const allCountryUrls = buildCountryUrls(alert.productUrl);
+    const countryUrls = filterCountryUrlsByAlert(allCountryUrls, alert);
+
+    if (countryUrls.length === 0) {
+        return {
+            inStock: false,
+            sizeMatched: false,
+            targetSize: alert.targetSize,
+
+            results: [],
+            matchedCountries: [],
+            bestCountryResult: null,
+
+            availableSizes: [],
+            soldOutSizes: [],
+
+            stockStatus: "out_of_stock",
+            checkedAt: nowIso()
+        };
+    }
 
     const chunks = chunkArray(countryUrls, MAX_PARALLEL_COUNTRY_CHECK);
     const results = [];
@@ -526,7 +621,9 @@ async function checkStockAlerts() {
     const alerts = Object.entries(alertsData)
         .map(([id, alert]) => ({
             id,
-            ...alert
+            ...alert,
+            targetCountries: normalizeTargetCountries(alert.targetCountries),
+            targetCountryNames: getCountryNamesFromCodes(alert.targetCountries)
         }))
         .filter(alert => isActiveWatchingStatus(alert.status));
 
@@ -562,11 +659,12 @@ async function checkStockAlerts() {
             const alert = await fillAlertProductData(rawAlert);
 
             try {
-                console.log("Đang canh back nhiều nước:", {
+                console.log("Đang canh back:", {
                     productName: alert.productName,
                     productCode: alert.productCode,
                     size: alert.targetSize,
-                    email: alert.email
+                    email: alert.email,
+                    countries: alert.targetCountries
                 });
 
                 const stock = await checkMultiCountryStock(browser, alert);
@@ -583,6 +681,9 @@ async function checkStockAlerts() {
                     productCode: alert.productCode || "",
                     productUrl: alert.productUrl || "",
                     productImage: alert.productImage || "",
+
+                    targetCountries: normalizeTargetCountries(alert.targetCountries),
+                    targetCountryNames: getCountryNamesFromCodes(alert.targetCountries),
 
                     lastCheckedAt: stock.checkedAt,
                     lastAvailableSizes: stock.availableSizes || [],
@@ -696,7 +797,8 @@ async function checkSingleStock(productUrl, targetSize = "") {
 
         const alert = {
             productUrl,
-            targetSize: normalizeSize(targetSize)
+            targetSize: normalizeSize(targetSize),
+            targetCountries: ["ALL"]
         };
 
         const result = await checkMultiCountryStock(browser, alert);

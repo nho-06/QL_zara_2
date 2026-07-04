@@ -29,9 +29,70 @@ function sendError(res, error, status = 500) {
     });
 }
 
+function normalizeCountryCode(value) {
+    return String(value || "")
+        .trim()
+        .toUpperCase();
+}
+
+function normalizeTargetCountries(value) {
+    if (!Array.isArray(value) || value.length === 0) {
+        return ["ALL"];
+    }
+
+    const countries = value
+        .map(item => normalizeCountryCode(item))
+        .filter(Boolean);
+
+    const uniqueCountries = [...new Set(countries)];
+
+    const onlyRealCountries = uniqueCountries.filter(code => code !== "ALL");
+
+    if (onlyRealCountries.length > 0) {
+        return onlyRealCountries;
+    }
+
+    return ["ALL"];
+}
+
+function getTargetCountryNames(targetCountries) {
+    const labels = {
+        ALL: "Tất cả",
+        ES: "Tây Ban Nha",
+        DE: "Đức",
+        PL: "Ba Lan",
+        PT: "Bồ Đào Nha",
+        JP: "Nhật"
+    };
+
+    const countries = normalizeTargetCountries(targetCountries);
+
+    return countries.map(code => labels[code] || code);
+}
+
 router.post("/watch", async (req, res) => {
     try {
-        const result = await saveWatchAlert(req.body || {});
+        const body = req.body || {};
+
+        const targetCountries = normalizeTargetCountries(body.targetCountries);
+        const targetCountryNames = getTargetCountryNames(targetCountries);
+
+        const payload = {
+            ...body,
+            targetCountries,
+            targetCountryNames
+        };
+
+        console.log("===== BODY CANH BACK NHAN TU WEB =====");
+        console.log("productName:", payload.productName);
+        console.log("productCode:", payload.productCode);
+        console.log("targetSize:", payload.targetSize);
+        console.log("email:", payload.email);
+        console.log("targetCountries:", payload.targetCountries);
+        console.log("targetCountryNames:", payload.targetCountryNames);
+        console.log("======================================");
+
+        const result = await saveWatchAlert(payload);
 
         sendSuccess(res, result);
     } catch (error) {

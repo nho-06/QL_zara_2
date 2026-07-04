@@ -4,6 +4,49 @@
     <meta charset="UTF-8">
     <title>Trang chủ sản phẩm</title>
     <link rel="stylesheet" href="style.css">
+
+    <style>
+        .watch-country-box {
+            margin: 12px 0;
+            padding: 14px;
+            border-radius: 14px;
+            background: #f7f7f8;
+        }
+
+        .watch-country-title {
+            margin: 0 0 10px;
+            font-weight: 800;
+            color: #333;
+        }
+
+        .watch-country-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+        }
+
+        .watch-country-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 12px;
+            border-radius: 12px;
+            background: #fff;
+            cursor: pointer;
+            font-weight: 700;
+        }
+
+        .watch-country-item input {
+            width: auto;
+            margin: 0;
+        }
+
+        @media (max-width: 700px) {
+            .watch-country-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
 </head>
 <body>
 
@@ -103,11 +146,19 @@
                 <option value="">-- Chọn size cần canh --</option>
             </select>
 
+            <div class="watch-country-box">
+                <p class="watch-country-title">Chọn nước cần canh:</p>
+                <div class="watch-country-grid" id="watchCountryOptions"></div>
+            </div>
+
+            <select id="watchSavedEmail" onchange="onWatchSavedEmailChange()">
+                <option value="">-- Chọn email có sẵn --</option>
+            </select>
+
             <input
                 type="email"
                 id="watchEmail"
-                placeholder="Nhập email nhận thông báo"
-                required
+                placeholder="Hoặc nhập email khác"
             >
 
             <div class="modal-actions">
@@ -141,6 +192,15 @@ let lastProductPrices = [];
 let lastRate = 31500;
 let currentStockFilter = "all";
 
+const WATCH_COUNTRIES = [
+    { code: "ALL", name: "Tất cả" },
+    { code: "ES", name: "Tây Ban Nha" },
+    { code: "DE", name: "Đức" },
+    { code: "PL", name: "Ba Lan" },
+    { code: "PT", name: "Bồ Đào Nha" },
+    { code: "JP", name: "Nhật" }
+];
+
 window.loadProducts = loadProducts;
 window.searchProducts = searchProducts;
 window.openOrderModal = openOrderModal;
@@ -154,6 +214,8 @@ window.watchStockFromHome = watchStockFromHome;
 window.closeWatchStockModal = closeWatchStockModal;
 window.submitWatchStockForm = submitWatchStockForm;
 window.checkStockNow = checkStockNow;
+window.onWatchSavedEmailChange = onWatchSavedEmailChange;
+window.onWatchCountryChange = onWatchCountryChange;
 
 function safeNumber(value) {
     if (value === null || value === undefined || value === "") {
@@ -178,7 +240,6 @@ function safeNumber(value) {
     }
 
     const number = Number(text);
-
     return isNaN(number) ? 0 : number;
 }
 
@@ -220,6 +281,191 @@ function uniqueSizes(sizes) {
     });
 
     return result;
+}
+
+const DEFAULT_WATCH_EMAILS = [
+    "dieuthien.ttdt@gmail.com"
+];
+
+function getSavedWatchEmails() {
+    try {
+        const saved = JSON.parse(localStorage.getItem("watchEmails") || "[]");
+
+        return [...new Set([
+            ...DEFAULT_WATCH_EMAILS,
+            ...saved
+        ].filter(Boolean))];
+    } catch (error) {
+        return DEFAULT_WATCH_EMAILS;
+    }
+}
+
+function saveWatchEmail(email) {
+    const cleanEmail = String(email || "").trim().toLowerCase();
+
+    if (!cleanEmail) {
+        return;
+    }
+
+    const emails = getSavedWatchEmails();
+
+    if (!emails.includes(cleanEmail)) {
+        emails.unshift(cleanEmail);
+    }
+
+    localStorage.setItem("watchEmails", JSON.stringify(emails));
+    localStorage.setItem("lastWatchEmail", cleanEmail);
+}
+
+function renderWatchEmailSelect() {
+    const select = document.getElementById("watchSavedEmail");
+    const input = document.getElementById("watchEmail");
+
+    if (!select || !input) {
+        return;
+    }
+
+    const emails = getSavedWatchEmails();
+    const lastEmail = localStorage.getItem("lastWatchEmail") || emails[0] || "";
+
+    select.innerHTML = `<option value="">-- Chọn email có sẵn --</option>`;
+
+    emails.forEach(email => {
+        select.innerHTML += `
+            <option value="${safe(email)}">
+                ${safe(email)}
+            </option>
+        `;
+    });
+
+    select.value = lastEmail || "";
+    input.value = "";
+}
+
+function onWatchSavedEmailChange() {
+    const input = document.getElementById("watchEmail");
+
+    if (!input) {
+        return;
+    }
+
+    input.value = "";
+}
+
+function normalizeSelectedCountries(countries) {
+    if (!Array.isArray(countries) || countries.length === 0) {
+        return ["ALL"];
+    }
+
+    const cleanCountries = countries
+        .map(item => String(item || "").trim().toUpperCase())
+        .filter(Boolean);
+
+    const uniqueCountries = [...new Set(cleanCountries)];
+
+    const onlyRealCountries = uniqueCountries.filter(code => code !== "ALL");
+
+    if (onlyRealCountries.length > 0) {
+        return onlyRealCountries;
+    }
+
+    return ["ALL"];
+}
+
+function getCountryNames(countries) {
+    const list = normalizeSelectedCountries(countries);
+
+    return list.map(code => {
+        const found = WATCH_COUNTRIES.find(item => item.code === code);
+        return found ? found.name : code;
+    });
+}
+
+function renderWatchCountries() {
+    const box = document.getElementById("watchCountryOptions");
+
+    if (!box) {
+        return;
+    }
+
+    let saved = [];
+
+    try {
+        saved = JSON.parse(localStorage.getItem("watchCountries") || "[]");
+    } catch (error) {
+        saved = [];
+    }
+
+    if (!Array.isArray(saved) || saved.length === 0) {
+        saved = ["ALL"];
+    }
+
+    saved = normalizeSelectedCountries(saved);
+
+    box.innerHTML = WATCH_COUNTRIES.map(country => {
+        const checked = saved.includes(country.code) ? "checked" : "";
+
+        return `
+            <label class="watch-country-item">
+                <input
+                    type="checkbox"
+                    class="watch-country-check"
+                    value="${safe(country.code)}"
+                    ${checked}
+                    onchange="onWatchCountryChange('${safe(country.code)}')"
+                >
+                <span>${safe(country.name)}</span>
+            </label>
+        `;
+    }).join("");
+
+    saveSelectedWatchCountries();
+}
+
+function onWatchCountryChange(changedCode) {
+    const checks = Array.from(document.querySelectorAll(".watch-country-check"));
+    const allCheck = checks.find(item => item.value === "ALL");
+    const otherChecks = checks.filter(item => item.value !== "ALL");
+
+    if (changedCode === "ALL") {
+        if (allCheck && allCheck.checked) {
+            otherChecks.forEach(item => {
+                item.checked = false;
+            });
+        } else {
+            const hasOtherChecked = otherChecks.some(item => item.checked);
+
+            if (!hasOtherChecked && allCheck) {
+                allCheck.checked = true;
+            }
+        }
+
+        saveSelectedWatchCountries();
+        return;
+    }
+
+    const hasOtherChecked = otherChecks.some(item => item.checked);
+
+    if (allCheck) {
+        allCheck.checked = !hasOtherChecked;
+    }
+
+    saveSelectedWatchCountries();
+}
+
+function getSelectedWatchCountries() {
+    const checks = Array.from(document.querySelectorAll(".watch-country-check"));
+
+    const selected = checks
+        .filter(item => item.checked)
+        .map(item => item.value);
+
+    return normalizeSelectedCountries(selected);
+}
+
+function saveSelectedWatchCountries() {
+    const selected = getSelectedWatchCountries();
+    localStorage.setItem("watchCountries", JSON.stringify(selected));
 }
 
 function getAvailableProductSizes(product) {
@@ -728,7 +974,9 @@ function watchStockFromHome(index) {
         select.innerHTML += `<option value="${safe(size)}">${safe(size)} - hết size</option>`;
     });
 
-    document.getElementById("watchEmail").value = "";
+    renderWatchCountries();
+    renderWatchEmailSelect();
+
     document.getElementById("watchStockModal").classList.remove("hidden");
 }
 
@@ -747,18 +995,35 @@ async function submitWatchStockForm(event) {
         return;
     }
 
-    const email = document.getElementById("watchEmail").value.trim();
+    const selectedEmail = document.getElementById("watchSavedEmail").value.trim();
+    const inputEmail = document.getElementById("watchEmail").value.trim();
+    const email = inputEmail || selectedEmail;
+
     const targetSize = document.getElementById("watchTargetSize").value.trim();
+    const targetCountries = getSelectedWatchCountries();
+    const targetCountryNames = getCountryNames(targetCountries);
+
+    console.log("NƯỚC ĐÃ CHỌN:", targetCountries);
+    console.log("TÊN NƯỚC ĐÃ CHỌN:", targetCountryNames);
 
     if (!email) {
-        alert("Bạn chưa nhập email.");
+        alert("Bạn chưa chọn hoặc nhập email.");
         return;
     }
+
+    saveWatchEmail(email);
 
     if (!targetSize) {
         alert("Bạn chưa chọn size cần canh.");
         return;
     }
+
+    if (!targetCountries || targetCountries.length === 0) {
+        alert("Bạn chưa chọn nước cần canh.");
+        return;
+    }
+
+    saveSelectedWatchCountries();
 
     const payload = {
         productId: product.id || product.productCode || "",
@@ -770,6 +1035,8 @@ async function submitWatchStockForm(event) {
 
         email,
         targetSize,
+        targetCountries,
+        targetCountryNames,
 
         status: "watching",
         notified: false,
@@ -777,6 +1044,8 @@ async function submitWatchStockForm(event) {
         createdAt: now(),
         updatedAt: now()
     };
+
+    console.log("PAYLOAD CANH BACK:", payload);
 
     try {
         const response = await fetch(`${SERVER_BASE_URL}/stock-alerts/watch`, {
@@ -834,7 +1103,7 @@ async function checkStockNow(index) {
             return;
         }
 
-        const data = result.data || {};
+        const data = result.data || result || {};
         const availableSizes = data.availableSizes || [];
 
         alert(
