@@ -12,23 +12,32 @@ if (!productUrl) {
 
 async function scrapeZara() {
     const browser = await chromium.launch({
-        headless: false,
+        headless: true,
         args: [
             "--disable-blink-features=AutomationControlled",
             "--no-sandbox",
-            "--disable-setuid-sandbox"
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--disable-software-rasterizer",
+            "--disable-extensions"
         ]
     });
 
     const context = await browser.newContext({
         locale: "es-ES",
         timezoneId: "Europe/Madrid",
+
         viewport: {
             width: 1366,
             height: 768
         },
+
         userAgent:
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+            "AppleWebKit/537.36 (KHTML, like Gecko) " +
+            "Chrome/124.0.0.0 Safari/537.36",
+
         extraHTTPHeaders: {
             "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
             "Upgrade-Insecure-Requests": "1"
@@ -48,7 +57,9 @@ async function scrapeZara() {
     const uploadDir = path.join(__dirname, "..", "uploads");
 
     if (!fs.existsSync(uploadDir)) {
-        fs.mkdirSync(uploadDir, { recursive: true });
+        fs.mkdirSync(uploadDir, {
+            recursive: true
+        });
     }
 
     try {
@@ -76,15 +87,15 @@ async function scrapeZara() {
             accessDeniedText.includes("You don't have permission to access") ||
             accessDeniedText.includes("Reference #")
         ) {
-            await browser.close();
-
             const errorData = {
                 success: false,
                 message:
-                    "Zara đang chặn truy cập tự động nên không lấy được dữ liệu. Hãy mở link trên Chrome thường, hoặc thử link khác / mạng khác / tắt VPN nếu có."
+                    "Zara đang chặn truy cập tự động nên không lấy được dữ liệu. Hãy thử link khác hoặc thử lại sau."
             };
 
             console.log(JSON.stringify(errorData));
+
+            await browser.close();
             process.exit(2);
         }
 
@@ -101,14 +112,29 @@ async function scrapeZara() {
 
         for (const selector of cookieButtons) {
             try {
-                const btn = page.locator(selector).first();
+                const button = page.locator(selector).first();
 
-                if (await btn.count()) {
-                    await btn.click({ timeout: 3000 });
-                    await page.waitForTimeout(1500);
-                    break;
+                if (!(await button.count())) {
+                    continue;
                 }
-            } catch (e) {}
+
+                const visible = await button
+                    .isVisible()
+                    .catch(() => false);
+
+                if (!visible) {
+                    continue;
+                }
+
+                await button.click({
+                    timeout: 3000
+                });
+
+                await page.waitForTimeout(1500);
+                break;
+            } catch (error) {
+                // Bỏ qua popup không bấm được.
+            }
         }
 
         const countryButtons = [
@@ -122,15 +148,31 @@ async function scrapeZara() {
 
         for (const selector of countryButtons) {
             try {
-                const btn = page.locator(selector).first();
+                const button = page.locator(selector).first();
 
-                if (await btn.count()) {
-                    console.log("Đã thấy popup quốc gia, bấm tiếp tục Spain.");
-                    await btn.click({ timeout: 3000 });
-                    await page.waitForTimeout(2000);
-                    break;
+                if (!(await button.count())) {
+                    continue;
                 }
-            } catch (e) {}
+
+                const visible = await button
+                    .isVisible()
+                    .catch(() => false);
+
+                if (!visible) {
+                    continue;
+                }
+
+                console.log("Đã thấy popup quốc gia, bấm tiếp tục Spain.");
+
+                await button.click({
+                    timeout: 3000
+                });
+
+                await page.waitForTimeout(2000);
+                break;
+            } catch (error) {
+                // Bỏ qua popup không bấm được.
+            }
         }
 
         await page.waitForTimeout(3000);
@@ -144,8 +186,6 @@ async function scrapeZara() {
             bodyTextAfterPopup.includes("You don't have permission to access") ||
             bodyTextAfterPopup.includes("Reference #")
         ) {
-            await browser.close();
-
             const errorData = {
                 success: false,
                 message:
@@ -153,6 +193,8 @@ async function scrapeZara() {
             };
 
             console.log(JSON.stringify(errorData));
+
+            await browser.close();
             process.exit(2);
         }
 
@@ -170,10 +212,14 @@ async function scrapeZara() {
             ];
 
             for (const selector of titleSelectors) {
-                const el = document.querySelector(selector);
+                const element = document.querySelector(selector);
 
-                if (el && el.innerText && el.innerText.trim()) {
-                    title = el.innerText.trim();
+                if (
+                    element &&
+                    element.innerText &&
+                    element.innerText.trim()
+                ) {
+                    title = element.innerText.trim();
                     break;
                 }
             }
@@ -181,24 +227,29 @@ async function scrapeZara() {
             if (!title) {
                 const lines = bodyText
                     .split("\n")
-                    .map(x => x.trim())
+                    .map(item => item.trim())
                     .filter(Boolean);
 
-                title = lines.find(line =>
-                    line.length > 5 &&
-                    line.length < 100 &&
-                    line === line.toUpperCase() &&
-                    !line.includes("EUR") &&
-                    !line.includes("€") &&
-                    !line.includes("ZARA") &&
-                    !line.includes("LOG IN") &&
-                    !line.includes("HELP")
-                ) || "";
+                title =
+                    lines.find(line => {
+                        return (
+                            line.length > 5 &&
+                            line.length < 100 &&
+                            line === line.toUpperCase() &&
+                            !line.includes("EUR") &&
+                            !line.includes("€") &&
+                            !line.includes("ZARA") &&
+                            !line.includes("LOG IN") &&
+                            !line.includes("HELP")
+                        );
+                    }) || "";
             }
 
             let productCode = "";
 
-            const codeMatch = bodyText.match(/[0-9]{4}\/[0-9]{3}\/[0-9]{3}/);
+            const codeMatch = bodyText.match(
+                /[0-9]{4}\/[0-9]{3}\/[0-9]{3}/
+            );
 
             if (codeMatch) {
                 productCode = codeMatch[0];
@@ -209,7 +260,7 @@ async function scrapeZara() {
             if (productCode) {
                 const colorLine = bodyText
                     .split("\n")
-                    .map(x => x.trim())
+                    .map(item => item.trim())
                     .find(line => line.includes(productCode));
 
                 if (colorLine) {
@@ -220,28 +271,35 @@ async function scrapeZara() {
                 }
             }
 
-            const priceRegex = /([0-9]+[,.][0-9]{2})\s*(EUR|€)/gi;
+            const priceRegex =
+                /([0-9]+[,.][0-9]{2})\s*(EUR|€)/gi;
 
-            let priceMatches = [...bodyText.matchAll(priceRegex)];
+            let priceMatches = [
+                ...bodyText.matchAll(priceRegex)
+            ];
 
             if (priceMatches.length === 0) {
-                priceMatches = [...fullText.matchAll(priceRegex)];
+                priceMatches = [
+                    ...fullText.matchAll(priceRegex)
+                ];
             }
 
             let prices = priceMatches.map(match => {
                 return {
                     text: match[0].trim(),
-                    value: parseFloat(match[1].replace(",", "."))
+                    value: parseFloat(
+                        match[1].replace(",", ".")
+                    )
                 };
             });
 
             const uniquePrices = [];
             const seen = new Set();
 
-            for (const p of prices) {
-                if (!seen.has(p.value)) {
-                    seen.add(p.value);
-                    uniquePrices.push(p);
+            for (const price of prices) {
+                if (!seen.has(price.value)) {
+                    seen.add(price.value);
+                    uniquePrices.push(price);
                 }
             }
 
@@ -266,9 +324,16 @@ async function scrapeZara() {
 
             let image = "";
 
-            const images = Array.from(document.querySelectorAll("img"))
+            const images = Array.from(
+                document.querySelectorAll("img")
+            )
                 .map(img => img.src)
-                .filter(src => src && src.includes("static.zara.net"));
+                .filter(src => {
+                    return (
+                        src &&
+                        src.includes("static.zara.net")
+                    );
+                });
 
             if (images.length > 0) {
                 image = images[0];
@@ -278,18 +343,20 @@ async function scrapeZara() {
 
             const lines = bodyText
                 .split("\n")
-                .map(x => x.trim())
+                .map(item => item.trim())
                 .filter(Boolean);
 
-            const descLine = lines.find(line =>
-                line.length > 60 &&
-                !line.includes("EUR") &&
-                !line.includes("€") &&
-                !line.includes("ADD") &&
-                !line.includes("Pay") &&
-                !line.includes("COMPLETE YOUR LOOK") &&
-                !line.includes("PRODUCT MEASUREMENTS")
-            );
+            const descLine = lines.find(line => {
+                return (
+                    line.length > 60 &&
+                    !line.includes("EUR") &&
+                    !line.includes("€") &&
+                    !line.includes("ADD") &&
+                    !line.includes("Pay") &&
+                    !line.includes("COMPLETE YOUR LOOK") &&
+                    !line.includes("PRODUCT MEASUREMENTS")
+                );
+            });
 
             if (descLine) {
                 description = descLine;
@@ -313,8 +380,6 @@ async function scrapeZara() {
         });
 
         if (!data.title || !data.productCode) {
-            await browser.close();
-
             const errorData = {
                 success: false,
                 message:
@@ -322,6 +387,8 @@ async function scrapeZara() {
             };
 
             console.log(JSON.stringify(errorData));
+
+            await browser.close();
             process.exit(2);
         }
 
@@ -330,19 +397,32 @@ async function scrapeZara() {
         try {
             console.log("Đang tìm PRODUCT MEASUREMENTS...");
 
-            const productMeasurements = page.locator("text=PRODUCT MEASUREMENTS").first();
+            const productMeasurements = page
+                .locator("text=PRODUCT MEASUREMENTS")
+                .first();
 
             if (await productMeasurements.count()) {
-                await productMeasurements.scrollIntoViewIfNeeded({ timeout: 8000 });
+                await productMeasurements.scrollIntoViewIfNeeded({
+                    timeout: 8000
+                });
+
                 await page.waitForTimeout(800);
 
-                await productMeasurements.click({ timeout: 4000 });
+                await productMeasurements.click({
+                    timeout: 4000
+                });
+
                 await page.waitForTimeout(1800);
 
                 console.log("Đã bấm PRODUCT MEASUREMENTS.");
 
-                const fileName = "size_chart_" + Date.now() + ".png";
-                const fullPath = path.join(uploadDir, fileName);
+                const fileName =
+                    "size_chart_" + Date.now() + ".png";
+
+                const fullPath = path.join(
+                    uploadDir,
+                    fileName
+                );
 
                 await page.screenshot({
                     path: fullPath,
@@ -353,19 +433,31 @@ async function scrapeZara() {
             } else {
                 console.log("Không thấy PRODUCT MEASUREMENTS.");
             }
-        } catch (e) {
-            console.log("Không chụp được bảng size:", e.message);
+        } catch (error) {
+            console.log(
+                "Không chụp được bảng size:",
+                error.message
+            );
         }
 
         const sizeChart = await page.evaluate(() => {
-            const bodyText = document.body.innerText || "";
+            const bodyText =
+                document.body.innerText || "";
 
             const linesForSize = bodyText
                 .split("\n")
-                .map(x => x.trim())
+                .map(item => item.trim())
                 .filter(Boolean);
 
-            const possibleSizes = ["XXS", "XS", "S", "M", "L", "XL", "XXL"];
+            const possibleSizes = [
+                "XXS",
+                "XS",
+                "S",
+                "M",
+                "L",
+                "XL",
+                "XXL"
+            ];
 
             const foundSizes = possibleSizes.filter(size => {
                 return linesForSize.includes(size);
@@ -386,47 +478,71 @@ async function scrapeZara() {
 
             for (const area of areas) {
                 const index = linesForSize.findIndex(line => {
-                    return line.toLowerCase() === area.toLowerCase();
+                    return (
+                        line.toLowerCase() ===
+                        area.toLowerCase()
+                    );
                 });
 
-                if (index !== -1) {
-                    const values = [];
+                if (index === -1) {
+                    continue;
+                }
 
-                    for (let i = index + 1; i < linesForSize.length; i++) {
-                        const line = linesForSize[i];
+                const values = [];
 
-                        if (areas.some(a => a.toLowerCase() === line.toLowerCase())) {
-                            break;
-                        }
+                for (
+                    let i = index + 1;
+                    i < linesForSize.length;
+                    i++
+                ) {
+                    const line = linesForSize[i];
 
-                        if (/^[0-9]+(\.[0-9]+)?$/.test(line)) {
-                            values.push(line);
-                        }
-
-                        if (values.length >= foundSizes.length && foundSizes.length > 0) {
-                            break;
-                        }
+                    if (
+                        areas.some(item => {
+                            return (
+                                item.toLowerCase() ===
+                                line.toLowerCase()
+                            );
+                        })
+                    ) {
+                        break;
                     }
 
-                    if (values.length > 0) {
-                        const row = {
-                            area: area
-                        };
-
-                        foundSizes.forEach((size, idx) => {
-                            row[size] = values[idx] || "";
-                        });
-
-                        rows.push(row);
+                    if (
+                        /^[0-9]+(\.[0-9]+)?$/.test(line)
+                    ) {
+                        values.push(line);
                     }
+
+                    if (
+                        foundSizes.length > 0 &&
+                        values.length >= foundSizes.length
+                    ) {
+                        break;
+                    }
+                }
+
+                if (values.length > 0) {
+                    const row = {
+                        area
+                    };
+
+                    foundSizes.forEach((size, idx) => {
+                        row[size] = values[idx] || "";
+                    });
+
+                    rows.push(row);
                 }
             }
 
-            if (foundSizes.length > 0 && rows.length > 0) {
+            if (
+                foundSizes.length > 0 &&
+                rows.length > 0
+            ) {
                 return {
                     unit: "CM",
                     sizes: foundSizes,
-                    rows: rows
+                    rows
                 };
             }
 
@@ -442,19 +558,23 @@ async function scrapeZara() {
             "utf8"
         );
 
-        console.log(JSON.stringify({
-            success: true,
-            data: data
-        }));
+        console.log(
+            JSON.stringify({
+                success: true,
+                data
+            })
+        );
 
         await browser.close();
     } catch (error) {
-        await browser.close();
+        await browser.close().catch(() => {});
 
-        console.log(JSON.stringify({
-            success: false,
-            message: error.message
-        }));
+        console.log(
+            JSON.stringify({
+                success: false,
+                message: error.message
+            })
+        );
 
         process.exit(2);
     }
