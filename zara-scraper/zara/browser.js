@@ -65,12 +65,15 @@ function getLocaleByCountry(countryCode = "es") {
 
 async function createBrowser() {
     return await chromium.launch({
-        headless: false,
+        headless: true,
         args: [
             "--disable-blink-features=AutomationControlled",
             "--no-sandbox",
             "--disable-setuid-sandbox",
-            "--disable-dev-shm-usage"
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--disable-software-rasterizer",
+            "--disable-extensions"
         ]
     });
 }
@@ -81,12 +84,17 @@ async function createContext(browser, countryCode = "es") {
     return await browser.newContext({
         locale: localeConfig.locale,
         timezoneId: localeConfig.timezoneId,
+
         viewport: {
             width: 1366,
             height: 900
         },
+
         userAgent:
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+            "AppleWebKit/537.36 (KHTML, like Gecko) " +
+            "Chrome/124.0.0.0 Safari/537.36",
+
         extraHTTPHeaders: {
             "Accept-Language": localeConfig.acceptLanguage,
             "Upgrade-Insecure-Requests": "1"
@@ -128,18 +136,29 @@ async function acceptZaraPopups(page) {
 
     for (const selector of cookieButtons) {
         try {
-            const btn = page.locator(selector).first();
+            const button = page.locator(selector).first();
 
-            if (await btn.count()) {
-                const visible = await btn.isVisible().catch(() => false);
-
-                if (!visible) continue;
-
-                await btn.click({ timeout: 3000 });
-                await page.waitForTimeout(1500);
-                break;
+            if (!(await button.count())) {
+                continue;
             }
-        } catch (e) {}
+
+            const visible = await button
+                .isVisible()
+                .catch(() => false);
+
+            if (!visible) {
+                continue;
+            }
+
+            await button.click({
+                timeout: 3000
+            });
+
+            await page.waitForTimeout(1500);
+            break;
+        } catch (error) {
+            // Bỏ qua popup không bấm được.
+        }
     }
 
     const continueButtons = [
@@ -158,18 +177,29 @@ async function acceptZaraPopups(page) {
 
     for (const selector of continueButtons) {
         try {
-            const btn = page.locator(selector).first();
+            const button = page.locator(selector).first();
 
-            if (await btn.count()) {
-                const visible = await btn.isVisible().catch(() => false);
-
-                if (!visible) continue;
-
-                await btn.click({ timeout: 3000 });
-                await page.waitForTimeout(2000);
-                break;
+            if (!(await button.count())) {
+                continue;
             }
-        } catch (e) {}
+
+            const visible = await button
+                .isVisible()
+                .catch(() => false);
+
+            if (!visible) {
+                continue;
+            }
+
+            await button.click({
+                timeout: 3000
+            });
+
+            await page.waitForTimeout(2000);
+            break;
+        } catch (error) {
+            // Bỏ qua popup không bấm được.
+        }
     }
 }
 
