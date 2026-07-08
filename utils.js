@@ -20,7 +20,7 @@ import { db } from "./firebase-config.js";
 
     Lưu ý: không thêm dấu / ở cuối link.
 */
-export const SERVER_BASE_URL = "https://recipe-tee-removing-docs.trycloudflare.com";
+export const SERVER_BASE_URL = "https://seven-higher-gamma-equipment.trycloudflare.com";
 
 export function safe(text) {
     return String(text ?? "")
